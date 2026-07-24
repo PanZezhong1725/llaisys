@@ -29,7 +29,7 @@ void linear_(T *out, const T *in, const T *weight, const T *bias, size_t M, size
                 if constexpr (std::is_same_v<T, llaisys::bf16_t> || std::is_same_v<T, llaisys::fp16_t>) {
                     out[m * N + n] = llaisys::utils::cast<T>(llaisys::utils::cast<float>(out[m * N + n]) + llaisys::utils::cast<float>(bias[n]));
                 } else {
-                    out[m * N + n] += bias[n];
+                    out[m * N + n] += bias[n];;
                 }
 
             }
