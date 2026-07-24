@@ -76,3 +76,7 @@ def load_tensor(lib):
         c_size_t,  # end  : exclusive
     ]
     lib.tensorSlice.restype = llaisysTensor_t
+
+    # Function: tensorReshape(llaisysTensor_t tensor, size_t *shape, size_t ndim);
+    lib.tensorReshape.argtypes = [llaisysTensor_t, POINTER(c_size_t), c_size_t]
+    lib.tensorReshape.restype = llaisysTensor_t

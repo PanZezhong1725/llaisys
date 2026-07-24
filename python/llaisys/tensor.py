@@ -95,3 +95,9 @@ class Tensor:
                 self._tensor, c_size_t(dim), c_size_t(start), c_size_t(end)
             )
         )
+
+    def reshape(self, *shape: int) -> llaisysTensor_t:
+        _shape = (c_size_t * len(shape))(*shape)
+        return Tensor(
+            tensor=LIB_LLAISYS.tensorReshape(self._tensor, _shape, c_size_t(len(shape)))
+        )

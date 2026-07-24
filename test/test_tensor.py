@@ -48,6 +48,29 @@ def test_tensor():
     assert llaisys_tensor.is_contiguous() == torch_tensor.is_contiguous()
     assert check_equal(llaisys_tensor_slice, torch_tensor_slice)
 
+    # Test reshape (contiguous fast path)
+    print("===Test reshape (contiguous)===")
+    torch_tensor_reshape = torch_tensor.reshape(6, 10)
+    llaisys_tensor_reshape = llaisys_tensor.reshape(6, 10)
+    llaisys_tensor_reshape.debug()
+    assert llaisys_tensor_reshape.shape() == torch_tensor_reshape.shape
+    assert llaisys_tensor_reshape.strides() == torch_tensor_reshape.stride()
+    assert llaisys_tensor_reshape.is_contiguous() == torch_tensor_reshape.is_contiguous()
+    assert check_equal(llaisys_tensor_reshape, torch_tensor_reshape)
+
+    # Test reshape (non-contiguous, must go through contiguous())
+    print("===Test reshape (non-contiguous)===")
+    torch_tensor_perm_reshape = torch_tensor_perm.reshape(5, 12)
+    llaisys_tensor_perm_reshape = llaisys_tensor_perm.reshape(5, 12)
+    llaisys_tensor_perm_reshape.debug()
+    # NOTE: our reshape() always materializes a contiguous copy when the
+    # source isn't contiguous, so strides may differ from torch's (which can
+    # sometimes reshape part of a non-contiguous tensor without copying).
+    # Shape, contiguity of the *result*, and the actual data must still match.
+    assert llaisys_tensor_perm_reshape.shape() == torch_tensor_perm_reshape.shape
+    assert llaisys_tensor_perm_reshape.is_contiguous()
+    assert check_equal(llaisys_tensor_perm_reshape, torch_tensor_perm_reshape)
+
 
 if __name__ == "__main__":
     test_tensor()
