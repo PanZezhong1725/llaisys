@@ -1,4 +1,5 @@
 add_rules("mode.debug", "mode.release")
+add_rules("plugin.compile_commands.autoupdate", { outputdir = "./.vscode" })
 set_encodings("utf-8")
 
 add_includedirs("include")
@@ -108,6 +109,10 @@ target("llaisys")
     add_files("src/llaisys/*.cc")
     set_installdir(".")
 
+    if is_mode("debug") then
+        set_symbols("debug")
+        set_optimize("none")
+    end
     
     after_install(function (target)
         -- copy shared library to python package

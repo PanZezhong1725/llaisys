@@ -70,7 +70,9 @@ LLAISYS（Let's Learn AI SYStem）是一个教育项目，旨在为新手和未�
 - 使用PyTorch运行模型推理测试
 
   ```bash
-  python test/test_infer.py --model [dir_path/to/model]
+  hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --local-dir ~/huggingface/DeepSeek-R1-Distill-Qwen-1.5B
+
+  python test/test_infer.py --model ~/huggingface/DeepSeek-R1-Distill-Qwen-1.5B
   ```
 
   你可以看到PyTorch能够加载模型并使用示例输入执行推理。你可以调试进入`transformers`库代码来深入查看并了解其内部运作原理。现在，你的代码还无法执行任何操作，但在后续的作业中，你将构建一个能够实现相同功能的系统。

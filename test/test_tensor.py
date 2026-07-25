@@ -1,9 +1,10 @@
 import llaisys
-
+print(llaisys.__file__)
+import os
+print("PID:", os.getpid())
 import torch
 from test_utils import *
 import argparse
-
 
 def test_tensor():
     torch_tensor = torch.arange(60, dtype=torch_dtype("i64")).reshape(3, 4, 5)

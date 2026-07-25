@@ -1,10 +1,15 @@
 #include "tensor.hpp"
 
 #include "../utils.hpp"
+#include "llaisys.h"
 
+#include <cassert>
+#include <cstddef>
 #include <cstring>
+#include <iterator>
 #include <numeric>
 #include <sstream>
+#include <vector>
 
 namespace llaisys {
 
@@ -16,7 +21,7 @@ tensor_t Tensor::create(const std::vector<size_t> &shape,
                         llaisysDeviceType_t device_type,
                         int device) {
     size_t ndim_ = shape.size();
-    std::vector<ptrdiff_t> strides(ndim_);
+    std::vector<ptrdiff_t> strides(ndim_); // ptrdiff_t 是 C/C++ 标准定义的有符号整数类型，语义是「两个指针相减的结果类型」，宽度与平台指针宽度一致
     size_t stride = 1;
     for (size_t i = 1; i <= ndim_; i++) {
         strides[ndim_ - i] = stride;
@@ -27,9 +32,15 @@ tensor_t Tensor::create(const std::vector<size_t> &shape,
     size_t dtype_size = utils::dsize(dtype);
 
     if (device_type == LLAISYS_DEVICE_CPU && core::context().runtime().deviceType() != LLAISYS_DEVICE_CPU) {
+        // 情况一：当前是 GPU Runtime，但要创建 CPU Tensor
+        // 不会先切换到 CPU Runtime，而是直接调用当前 GPU Runtime
+        // pinned host memory 页锁定内存 DMA
+        // 例如，在 CUDA 中使用 CudaHostMalloc
         auto storage = core::context().runtime().allocateHostStorage(total_elems * dtype_size);
         return std::shared_ptr<Tensor>(new Tensor(meta, storage));
     } else {
+        // 情况二 ：先切换 context 再执行 allocateDeviceStorage
+        // 对于不同的后端，实现不同
         core::context().setDevice(device_type, device);
         auto storage = core::context().runtime().allocateDeviceStorage(total_elems * dtype_size);
         return std::shared_ptr<Tensor>(new Tensor(meta, storage));
@@ -164,27 +175,111 @@ void Tensor::debug() const {
 }
 
 bool Tensor::isContiguous() const {
-    TO_BE_IMPLEMENTED();
+    if (_meta.shape.size() != _meta.strides.size()) {
+        return false;
+    }
+
+    ptrdiff_t expected_stride = 1;
+
+    for (size_t i = _meta.shape.size(); i-- > 0;) {
+        const size_t dim = _meta.shape[i];
+
+        // 大小为 1 的维度不会影响内存连续性
+        // shape {2, 1, 4}  stride {4, 100, 1}
+        if (dim != 1 && expected_stride != _meta.strides[i]) {
+            return false;
+        }
+        expected_stride *= static_cast<ptrdiff_t>(dim);
+    }
+
     return true;
 }
 
 tensor_t Tensor::permute(const std::vector<size_t> &order) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    size_t ndim = _meta.shape.size();
+    CHECK_ARGUMENT(order.size() == ndim, "order size is illegal");
+
+    // 检查 dims 是否是一个合法 permutation，不可超范围，不可重复
+    std::vector<bool> visited(ndim, false);
+
+    for (size_t i = 0; i < ndim; i++) {
+        CHECK_ARGUMENT(order[i] < ndim, "permute dimension out of range");
+        CHECK_ARGUMENT(!visited[order[i]], "permute dimensions must be unique");
+
+        visited[order[i]] = true;
+    }
+
+    std::vector<size_t> new_shape(ndim);
+    std::vector<ptrdiff_t> new_strides(ndim);
+
+    for (size_t i = 0; i < ndim; i++) {
+        new_shape[i] = _meta.shape[order[i]];
+        new_strides[i] = _meta.strides[order[i]];
+    }
+
+    TensorMeta new_meta{_meta.dtype, new_shape, new_strides};
+
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
 }
 
 tensor_t Tensor::view(const std::vector<size_t> &shape) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    const size_t old_numel = numel();
+    const size_t new_numel = std::accumulate(shape.begin(), shape.end(), size_t(1), std::multiplies<size_t>());
+    CHECK_ARGUMENT(old_numel == new_numel, "shape numel is illegal");
+    CHECK_ARGUMENT(isContiguous(), "Tensor is not contiguous");
+
+    size_t ndim_ = shape.size();
+    std::vector<ptrdiff_t> new_strides(ndim_);
+    size_t new_stride = 1;
+    for (size_t i = 1; i <= ndim_; i++) {
+        new_strides[ndim_ - i] = new_stride;
+        new_stride *= shape[ndim_ - i];
+    }
+    TensorMeta new_meta{_meta.dtype, shape, new_strides};
+
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
 }
 
 tensor_t Tensor::slice(size_t dim, size_t start, size_t end) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    size_t ndim = _meta.shape.size();
+    CHECK_ARGUMENT(dim < ndim, "dim must be less than _meta.shape.size()");
+    CHECK_ARGUMENT(start <= end, "start must not be greater than end");
+    CHECK_ARGUMENT(end <= _meta.shape[dim], "end must be less than _meta.shape[dim]");
+
+    std::vector<size_t> new_shape(std::begin(_meta.shape), std::end(_meta.shape));
+
+    new_shape[dim] = end - start;
+
+    // offset 保存 byte offset，注意要 * elementSize()
+    size_t new_offset = _offset + start * static_cast<size_t>(_meta.strides[dim]) * elementSize();
+
+    TensorMeta new_meta{_meta.dtype, new_shape, _meta.strides};
+
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, new_offset));
 }
 
 void Tensor::load(const void *src_) {
-    TO_BE_IMPLEMENTED();
+    CHECK_ARGUMENT(src_ != nullptr, "source pointer cannot be null");
+
+    ASSERT(isContiguous(), "load only supports contiguous tensors");
+
+    size_t n_bytes = numel() * elementSize();
+
+    if (n_bytes == 0) {
+        return;
+    }
+
+    const auto *api = core::context().runtime().api();
+
+    if (deviceType() == LLAISYS_DEVICE_CPU) {
+        // Host memory --> CPU Tensor, H2H
+        api->memcpy_sync(data(), src_, n_bytes, LLAISYS_MEMCPY_H2H);
+        return;
+    }
+
+    core::context().setDevice(deviceType(), deviceId());
+    // Host memory --> CUDA Tensor, H2D
+    api->memcpy_sync(data(), src_, n_bytes, LLAISYS_MEMCPY_H2D);
 }
 
 tensor_t Tensor::contiguous() const {

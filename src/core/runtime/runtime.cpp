@@ -26,6 +26,10 @@ void Runtime::_activate() {
     _is_active = true;
 }
 
+/*
+ * _deactivate() 没有调用底层“关闭设备”函数，只是更新逻辑状态
+ * 因为设备切换通常是：把另一个设备设置为 current，而不是“关闭原设备”
+ */
 void Runtime::_deactivate() {
     _is_active = false;
 }
@@ -46,10 +50,13 @@ const LlaisysRuntimeAPI *Runtime::api() const {
     return _api;
 }
 
+//  Device Storage：给算子在设备上直接计算
 storage_t Runtime::allocateDeviceStorage(size_t size) {
+    // _allocator->allocate 表示通过当前 Runtime 的设备内存分配器分配内存
     return std::shared_ptr<Storage>(new Storage(_allocator->allocate(size), size, *this, false));
 }
 
+// Host Storage：给 CPU 访问、加载数据和设备传输
 storage_t Runtime::allocateHostStorage(size_t size) {
     return std::shared_ptr<Storage>(new Storage((std::byte *)_api->malloc_host(size), size, *this, true));
 }
