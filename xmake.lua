@@ -90,9 +90,9 @@ target("llaisys-ops")
     if not is_plat("windows") then
         add_cxflags("-fPIC", "-Wno-unknown-pragmas")
     end
-    
+    -- 编译 ops 的框架内部的统一算子接口，不同设备的 kernel 由 device.xmake.lua 编译
+    -- 再添加依赖即可 add_deps("llaisys-ops-device")
     add_files("src/ops/*/*.cpp")
-
     on_install(function (target) end)
 target_end()
 

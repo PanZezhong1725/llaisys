@@ -3,6 +3,37 @@
 #include <cstring>
 
 namespace llaisys::utils {
+/*
+ * FP32:
+ * ┌─ sign
+ * │ ┌──────── exponent: 8 bits
+ * │ │        ┌─────────────────────── fraction: 23 bits
+ * 0 00000000 00000000000000000000000
+ * 
+ * F16:
+ * ┌─ sign
+ * │ ┌───── exponent: 5 bits
+ * │ │     ┌────────── fraction: 10 bits
+ * 0 00000 0000000000
+ * 
+ * BF16:
+ * ┌─ sign
+ * │ ┌──────── exponent: 8 bits
+ * │ │        ┌─────── fraction: 7 bits
+ * 0 00000000 0000000
+ * 
+ * F16：
+ *   5 位指数，10 位尾数
+ *   范围小，精度相对高
+ *   容易上下溢
+ *   常用于推理和混合精度计算
+ * 
+ * BF16：
+ *   8 位指数，7 位尾数
+ *   范围接近 FP32，精度相对低
+ *   训练更稳定
+ *   常用于大模型训练
+*/
 float _f16_to_f32(fp16_t val) {
     uint16_t h = val._v;
     uint32_t sign = (h & 0x8000) << 16;
@@ -39,7 +70,7 @@ float _f16_to_f32(fp16_t val) {
 
 fp16_t _f32_to_f16(float val) {
     uint32_t f32;
-    memcpy(&f32, &val, sizeof(f32));               // Read the bits of the float32
+    memcpy(&f32, &val, sizeof(f32));  // Read the bits of the float32
     uint16_t sign = (f32 >> 16) & 0x8000;          // Extract the sign bit
     int32_t exponent = ((f32 >> 23) & 0xFF) - 127; // Extract and de-bias the exponent
     uint32_t mantissa = f32 & 0x7FFFFF;            // Extract the mantissa (fraction part)

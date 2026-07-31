@@ -2,7 +2,7 @@ from .libllaisys import LIB_LLAISYS
 from .tensor import Tensor
 from ctypes import c_float, c_int
 
-
+# 高层封装，面向用户的 Python API
 class Ops:
     @staticmethod
     def add(c: Tensor, a: Tensor, b: Tensor):
@@ -21,7 +21,7 @@ class Ops:
     @staticmethod
     def linear(out: Tensor, inp: Tensor, weight: Tensor, bias: Tensor):
         LIB_LLAISYS.llaisysLinear(
-            out.lib_tensor(), inp.lib_tensor(), weight.lib_tensor(), bias.lib_tensor()
+            out.lib_tensor(), inp.lib_tensor(), weight.lib_tensor(), None if bias is None else bias.lib_tensor()
         )
 
     @staticmethod

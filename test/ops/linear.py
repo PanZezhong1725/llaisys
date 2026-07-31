@@ -54,6 +54,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     testShapes = [
         ((2, 3), (2, 4), (3, 4), True),
+        ((2, 3), (2, 4), (3, 4), False),
         ((512, 4096), (512, 4096), (4096, 4096), True),
     ]
     testDtypePrec = [
