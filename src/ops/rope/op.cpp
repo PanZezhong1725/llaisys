@@ -1,5 +1,5 @@
 #include "op.hpp"
-
+#include "nvidia/rope_cuda.cuh"
 #include "../../core/llaisys_core.hpp"
 #include "../../utils.hpp"
 
@@ -37,7 +37,7 @@ void rope(tensor_t out, tensor_t in, tensor_t pos_ids, float theta) {
         return cpu::rope(out->data(), in->data(), pos_ids->data(), out->dtype(), in->shape()[0], in->shape()[1], in->shape()[2], theta);
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
-        TO_BE_IMPLEMENTED();
+        cuda::rope(out->data(), in->data(), pos_ids->data(), out->dtype(), in->shape()[0], in->shape()[1], in->shape()[2], theta);
         return;
 #endif
     default:

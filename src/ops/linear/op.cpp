@@ -1,7 +1,7 @@
 #include "op.hpp"
 #include "../../core/llaisys_core.hpp"
 #include "../../utils.hpp"
-
+#include "nvidia/linear_cuda.cuh"
 #include "cpu/linear_cpu.hpp"
 
 namespace llaisys::ops {
@@ -31,7 +31,8 @@ void linear(tensor_t out, tensor_t in, tensor_t weight, tensor_t bias) {
                             out->dtype(), in->shape()[0], weight->shape()[0], in->shape()[1]);
     #ifdef ENABLE_NVIDIA_API
         case LLAISYS_DEVICE_NVIDIA:
-            TO_BE_IMPLEMENTED();
+            cuda::linear(out->data(), in->data(), weight->data(), bias_ptr,
+                            out->dtype(), in->shape()[0], weight->shape()[0], in->shape()[1]);
             return;
     #endif
         default:

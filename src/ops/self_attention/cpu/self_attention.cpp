@@ -30,6 +30,8 @@ void self_attention_(T *attn_val, const T *q, const T *k, const T *v,
             // 第一遍:算出所有 score[j] 并记录最大值 max_score。
             std::vector<float> scores(limit + 1);
             float max_score = -std::numeric_limits<float>::infinity();
+
+            //遍历每一个key
             for (size_t j = 0; j <= limit; j++) {
                 float score = 0.0f;
                 for (size_t dim = 0; dim < d; dim++) {

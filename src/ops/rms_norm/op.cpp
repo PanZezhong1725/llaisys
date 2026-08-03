@@ -2,7 +2,7 @@
 #include "cpu/rms_norm.hpp"
 #include "../../core/llaisys_core.hpp"
 #include "../../utils.hpp"
-
+#include "nvidia/rms_norm_cuda.cuh"
 //// RMSNorm:
 // y[i] = w[i] * x[i] / sqrt(mean(x^2) + eps)
 // where mean(x^2) = (1 / d) * sum_{j=0}^{d-1}(x[j] * x[j])
@@ -32,7 +32,7 @@ void rms_norm(tensor_t out, tensor_t in, tensor_t weight, float eps) {
         return;
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
-        TO_BE_IMPLEMENTED();
+        llaisys::ops::cuda::rms_norm(out->data(), in->data(), weight->data(), eps, out->dtype(), in->shape()[0], in->shape()[1]);
         return;
 #endif
     default:

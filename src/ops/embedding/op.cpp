@@ -3,6 +3,7 @@
 #include "../../utils.hpp"
 
 #include "cpu/embedding.hpp"
+#include "nvidia/embedding_cuda.cuh"
 
 namespace llaisys::ops {
 void embedding(tensor_t out, tensor_t index, tensor_t weight) {
@@ -22,7 +23,8 @@ void embedding(tensor_t out, tensor_t index, tensor_t weight) {
                                out->dtype(), index->numel(), weight->shape()[1]);
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
-        TO_BE_IMPLEMENTED();
+        cuda::embedding(out->data(), index->data(), weight->data(),
+                               out->dtype(), index->numel(), weight->shape()[1]);
         return;
 #endif
     default:

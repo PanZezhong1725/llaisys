@@ -1,13 +1,15 @@
 #include "rope_cpu.hpp"
 #include "../../../utils.hpp"
 #include <cmath>
-
+// 对每一对特征 (x_{2i}, x_{2i+1}) 做二维旋转：
+// y_{2i} = x_{2i}cosθ_i - x_{2i+1}sinθ_i。
+// y_{2i+1} = x_{2i}sinθ_i + x_{2i+1}cosθ_i，
+//其中 θ_i = position · base^{-2i/d}。
 // a[i][h][j]' = a[i][h][j] * cos(phi) - b[i][h][j] * sin(phi)
 // b[i][h][j]' = b[i][h][j] * cos(phi) + a[i][h][j] * sin(phi)
 // phi = pos_ids[i] / theta^(2j/d), j = 0 .. d/2-1
 template <typename T>
 void rope_(T *out, const T *in, const int64_t *pos_ids, float theta, size_t seqlen, size_t nhead, size_t d) {
-    // TODO: 实现旋转位置编码
     for(size_t i = 0; i < seqlen; i++) {
         for(size_t h = 0; h < nhead; h++) {
             size_t base = i * nhead * d + h * d;

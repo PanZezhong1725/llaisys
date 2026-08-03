@@ -2,6 +2,7 @@
 #include "./cpu/self_attention.hpp"
 #include "../../core/llaisys_core.hpp"
 #include "../../utils.hpp"
+#include "nvidia/self_attention_cuda.cuh"
 
 // V3: 支持 GQA,要求 nhead 是 nkvhead 的整数倍。
 // attn_val, q : [seqlen,    nhead,   d ] / [seqlen,    nhead,   dv]
@@ -43,8 +44,10 @@ void self_attention(tensor_t attn_val, tensor_t q, tensor_t k, tensor_t v, float
         return;
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
-        TO_BE_IMPLEMENTED();
+        llaisys::ops::cuda::self_attention(attn_val->data(), q->data(), k->data(), v->data(),
+                                           attn_val->dtype(), seqlen, total_len, nhead, nkvhead, d, dv, scale);
         return;
+
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

@@ -327,7 +327,7 @@ python test/test_infer.py --model [dir_path/to/model] --test
 每个 **Runtime** 对象都会初始化一组通用的 **Runtime API**。你需要实现 CUDA 版本的 API。参考 ``src/device/cpu/cpu_runtime_api.cpp`` 看 CPU 的实现方式，查阅 [`CUDA Runtime 文档`](https://docs.nvidia.com/cuda/cuda-runtime-api/index.html) 找到对应 API。
 
 在 ``src/device/runtime_api.hpp`` 中，``nvidia::getRuntimeAPI()`` 被 ``ENABLE_NVIDIA_API`` 宏保护：
-
+SM(Streaming Multiprocessor,流多处理器)
 ```c++
 #ifdef ENABLE_NVIDIA_API
 namespace nvidia {

@@ -2,7 +2,18 @@
 #include "../../../utils.hpp"
 #include <cmath>
 template <typename T>
-void rms_norm_(T *out, const T *in, const T *weight, float eps, size_t rows, size_t d) {
+void rms_norm_(
+    T *out,             // 输出张量，形状为 [rows, d]
+    const T *in,        // 输入张量，形状为 [rows, d]
+    const T *weight,    // 可学习缩放权重，形状为 [d]
+    float eps,          // 防止除零的稳定项 epsilon
+    size_t rows,        // 输入向量的行数，例如 token 数量
+    size_t d             // 每一行的特征维度，例如 hidden_size
+) {
+    // 对第 m 行，RMSNorm 公式为：
+    // mean_square_m = (1 / d) * Σ_{k=0}^{d-1} in[m, k]^2
+        // rms_m = sqrt(mean_square_m + eps)
+    // out[m, k] = weight[k] * in[m, k] / rms_m
     for (size_t m = 0; m < rows; m++) {
         float mean_square = 0.0f;
         for (size_t k = 0; k < d; k++) {
