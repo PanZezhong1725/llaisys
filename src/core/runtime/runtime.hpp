@@ -3,7 +3,7 @@
 
 #include "../../device/runtime_api.hpp"
 #include "../allocator/allocator.hpp"
-
+#include "../../device/device_resource.hpp"
 namespace llaisys::core {
 class Runtime {
 private:
@@ -15,6 +15,7 @@ private:
     void _activate();
     void _deactivate();
     llaisysStream_t _stream;
+    llaisys::device::DeviceResource* _resource;
     Runtime(llaisysDeviceType_t device_type, int device_id);
 
 public:
@@ -43,5 +44,6 @@ public:
 
     llaisysStream_t stream() const;
     void synchronize() const;
+    llaisys::device::DeviceResource *resource() const;
 };
 } // namespace llaisys::core
