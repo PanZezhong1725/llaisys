@@ -24,16 +24,17 @@ void linear(tensor_t out, tensor_t in, tensor_t weight, tensor_t bias) {
     }
 
     llaisys::core::context().setDevice(out->deviceType(), out->deviceId());
-    auto resource = llaisys::core::context().runtime().resource();
     switch (out->deviceType()) {
     case LLAISYS_DEVICE_CPU:
         return cpu::linear(out->data(), in->data(), weight->data(), bias_ptr,
                             out->dtype(), in->shape()[0], weight->shape()[0], in->shape()[1]);
     #ifdef ENABLE_NVIDIA_API
-        case LLAISYS_DEVICE_NVIDIA:
+        case LLAISYS_DEVICE_NVIDIA: {
+            auto resource = llaisys::core::context().runtime().resource();
             cuda::linear(out->data(), in->data(), weight->data(), bias_ptr,
                             out->dtype(), in->shape()[0], weight->shape()[0], in->shape()[1],resource);
             return;
+        }
     #endif
         default:
             EXCEPTION_UNSUPPORTED_DEVICE;
