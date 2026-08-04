@@ -1,12 +1,14 @@
+#include "../../../device/nvidia/nvidia_resource.cuh"
 #include "../../../utils.hpp"
 #include "self_attention_cuda.cuh"
+#include <cstdint>
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
-#include <cudnn_frontend.h>
 #include <cudnn.h>
-#include "../../../device/nvidia/nvidia_resource.cuh"
-#include <cstdint>
+#if CUDNN_MAJOR >= 8
+#include <cudnn_frontend.h>
+#endif
 // V1：手写的两遍 softmax kernel（GQA-aware，一个 block 处理一个 (query token i, head h)）。
 // cuDNN 的 SDPA 节点要求 head 维度（d/dv）必须是 8 的倍数，所以这一版留着当 fallback：
 // d 或 dv 不是 8 的倍数时用这个，其余情况走下面的 cudnn_frontend 版本。
@@ -62,7 +64,7 @@ __global__ void self_attention_kernel(T *attn_val, const T *q, const T *k, const
     __syncthreads();
     for (size_t stride = blockDim.x / 2; stride > 0; stride /= 2) {
         if (tid < stride) {
-            sumexp[tid] = sumexp[tid]+ sumexp[tid + stride];
+            sumexp[tid] = sumexp[tid] + sumexp[tid + stride];
         }
         __syncthreads();
     }
@@ -71,7 +73,7 @@ __global__ void self_attention_kernel(T *attn_val, const T *q, const T *k, const
     // 第三遍：按 dv 维度分工，加权求和 v 得到最终输出。
     for (size_t t = tid; t < dv; t += blockDim.x) {
         float acc = 0.0;
-        for (size_t j = 0; j <= limit; j += 1){
+        for (size_t j = 0; j <= limit; j += 1) {
             acc += (float)(scores[j]) * (float)(v[j * nkvhead * dv + kvh * dv + t]);
         }
         attn_val[i * nhead * dv + h * dv + t] = acc / sum_exp;
@@ -141,8 +143,8 @@ void self_attention(std::byte *attn_val, const std::byte *q, const std::byte *k,
             EXCEPTION_UNSUPPORTED_DATATYPE(type);
         }
     }
-
-    auto handle = static_cast<llaisys::device::nvidia::Resource*>(resource)->cudnnHandle();
+#if CUDNN_MAJOR >= 8
+    auto handle = static_cast<llaisys::device::nvidia::Resource *>(resource)->cudnnHandle();
 
     namespace fe = cudnn_frontend;
     using namespace fe::graph;
@@ -166,49 +168,45 @@ void self_attention(std::byte *attn_val, const std::byte *q, const std::byte *k,
     Graph graph;
 
     graph.set_io_data_type(io_dtype)
-     .set_intermediate_data_type(fe::DataType_t::FLOAT)
-     .set_compute_data_type(fe::DataType_t::FLOAT);
+        .set_intermediate_data_type(fe::DataType_t::FLOAT)
+        .set_compute_data_type(fe::DataType_t::FLOAT);
 
     // 定义 Q/K/V 三个 tensor，dim/stride 对好 llaisys 实际的 [s, h, elem_d] 内存布局。
     auto Q = graph.tensor(
         Tensor_attributes()
-        .set_name("Q")
-        .set_dim({1, static_cast<int64_t>(nhead), static_cast<int64_t>(seqlen), static_cast<int64_t>(d)})
-        .set_stride({static_cast<int64_t>(nhead*seqlen*d), static_cast<int64_t>(d), static_cast<int64_t>(nhead*d), 1})
-        .set_uid(1)
-    );
+            .set_name("Q")
+            .set_dim({1, static_cast<int64_t>(nhead), static_cast<int64_t>(seqlen), static_cast<int64_t>(d)})
+            .set_stride({static_cast<int64_t>(nhead * seqlen * d), static_cast<int64_t>(d), static_cast<int64_t>(nhead * d), 1})
+            .set_uid(1));
 
     auto K = graph.tensor(
         Tensor_attributes()
-        .set_name("K")
-        .set_dim({1, static_cast<int64_t>(nkvhead), static_cast<int64_t>(total_len), static_cast<int64_t>(d)})
-        .set_stride({static_cast<int64_t>(nkvhead*total_len*d), static_cast<int64_t>(d), static_cast<int64_t>(nkvhead*d), 1})
-        .set_uid(2)
-    );
+            .set_name("K")
+            .set_dim({1, static_cast<int64_t>(nkvhead), static_cast<int64_t>(total_len), static_cast<int64_t>(d)})
+            .set_stride({static_cast<int64_t>(nkvhead * total_len * d), static_cast<int64_t>(d), static_cast<int64_t>(nkvhead * d), 1})
+            .set_uid(2));
 
     auto V = graph.tensor(
         Tensor_attributes()
-        .set_name("V")
-        .set_dim({1, static_cast<int64_t>(nkvhead), static_cast<int64_t>(total_len), static_cast<int64_t>(dv)})
-        .set_stride({static_cast<int64_t>(nkvhead*total_len*dv), static_cast<int64_t>(dv), static_cast<int64_t>(nkvhead*dv), 1})
-        .set_uid(3)
-    );
+            .set_name("V")
+            .set_dim({1, static_cast<int64_t>(nkvhead), static_cast<int64_t>(total_len), static_cast<int64_t>(dv)})
+            .set_stride({static_cast<int64_t>(nkvhead * total_len * dv), static_cast<int64_t>(dv), static_cast<int64_t>(nkvhead * dv), 1})
+            .set_uid(3));
 
     auto [O, Stats] = graph.sdpa(
-    Q,
-    K,
-    V,
-    SDPA_attributes()
-        .set_name("attention")
-        .set_is_inference(true)
-        .set_causal_mask_bottom_right(true)
-        .set_attn_scale(scale)
-    );
+        Q,
+        K,
+        V,
+        SDPA_attributes()
+            .set_name("attention")
+            .set_is_inference(true)
+            .set_causal_mask_bottom_right(true)
+            .set_attn_scale(scale));
 
     // O 的 dim/stride 跟 Q 用同一套 {b, h, s, elem_d} 顺序（h=nhead, s=seqlen, elem_d=dv）。
     O->set_name("O")
         .set_dim({1, static_cast<int64_t>(nhead), static_cast<int64_t>(seqlen), static_cast<int64_t>(dv)})
-        .set_stride({static_cast<int64_t>(nhead*seqlen*dv), static_cast<int64_t>(dv), static_cast<int64_t>(nhead*dv), 1})
+        .set_stride({static_cast<int64_t>(nhead * seqlen * dv), static_cast<int64_t>(dv), static_cast<int64_t>(nhead * dv), 1})
         .set_uid(4)
         .set_output(true);
 
@@ -231,11 +229,11 @@ void self_attention(std::byte *attn_val, const std::byte *q, const std::byte *k,
 
     size_t workspace_size = graph.get_workspace_size();
     void *workspace;
-    std::unordered_map<int64_t, void*> variant_pack = {
-    {1 /* Q 的 uid */, (void*)const_cast<std::byte*>(q)},
-    {2 /* K 的 uid */, (void*)const_cast<std::byte*>(k)},
-    {3 /* V 的 uid */, (void*)const_cast<std::byte*>(v)},
-    {4 /* O 的 uid */, (void*)attn_val},
+    std::unordered_map<int64_t, void *> variant_pack = {
+        {1 /* Q 的 uid */, (void *)const_cast<std::byte *>(q)},
+        {2 /* K 的 uid */, (void *)const_cast<std::byte *>(k)},
+        {3 /* V 的 uid */, (void *)const_cast<std::byte *>(v)},
+        {4 /* O 的 uid */, (void *)attn_val},
     };
 
     cudaMalloc(&workspace, workspace_size);
@@ -244,6 +242,36 @@ void self_attention(std::byte *attn_val, const std::byte *q, const std::byte *k,
         std::cerr << "[cudnn_frontend] execute failed: " << exec_status.get_message() << std::endl;
     }
     cudaFree(workspace);
+#else
+    switch (type) {
+    case LLAISYS_DTYPE_F32:
+        launch_self_attention(
+            reinterpret_cast<float *>(attn_val),
+            reinterpret_cast<const float *>(q),
+            reinterpret_cast<const float *>(k),
+            reinterpret_cast<const float *>(v),
+            seqlen, total_len, nhead, nkvhead, d, dv, scale);
+        return;
+    case LLAISYS_DTYPE_BF16:
+        launch_self_attention(
+            reinterpret_cast<__nv_bfloat16 *>(attn_val),
+            reinterpret_cast<const __nv_bfloat16 *>(q),
+            reinterpret_cast<const __nv_bfloat16 *>(k),
+            reinterpret_cast<const __nv_bfloat16 *>(v),
+            seqlen, total_len, nhead, nkvhead, d, dv, scale);
+        return;
+    case LLAISYS_DTYPE_F16:
+        launch_self_attention(
+            reinterpret_cast<__half *>(attn_val),
+            reinterpret_cast<const __half *>(q),
+            reinterpret_cast<const __half *>(k),
+            reinterpret_cast<const __half *>(v),
+            seqlen, total_len, nhead, nkvhead, d, dv, scale);
+        return;
+    default:
+        EXCEPTION_UNSUPPORTED_DATATYPE(type);
+    }
+#endif
 }
 
 } // namespace llaisys::ops::cuda
