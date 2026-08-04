@@ -43,11 +43,12 @@ void self_attention(tensor_t attn_val, tensor_t q, tensor_t k, tensor_t v, float
                                            attn_val->dtype(), seqlen, total_len, nhead, nkvhead, d, dv, scale);
         return;
 #ifdef ENABLE_NVIDIA_API
-    case LLAISYS_DEVICE_NVIDIA:
+    case LLAISYS_DEVICE_NVIDIA: {
+        auto resource = llaisys::core::context().runtime().resource();
         llaisys::ops::cuda::self_attention(attn_val->data(), q->data(), k->data(), v->data(),
-                                           attn_val->dtype(), seqlen, total_len, nhead, nkvhead, d, dv, scale);
+                                           attn_val->dtype(), seqlen, total_len, nhead, nkvhead, d, dv, scale, resource);
         return;
-
+    }
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

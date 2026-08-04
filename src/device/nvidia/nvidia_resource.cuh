@@ -1,11 +1,13 @@
 #pragma once
 #include <cublas_v2.h>
+#include <cudnn.h>
 #include "../device_resource.hpp"
 
 namespace llaisys::device::nvidia {
 class Resource : public llaisys::device::DeviceResource {
 private:
     cublasHandle_t  _cublas_handle;
+    cudnnHandle_t   _cudnn_handle;
 public:
     Resource(int device_id);
     ~Resource();
@@ -13,6 +15,10 @@ public:
 
     cublasHandle_t cublasHandle() const {
         return _cublas_handle;
+    }
+
+    cudnnHandle_t cudnnHandle() const {
+        return _cudnn_handle;
     }
 };
 } // namespace llaisys::device::nvidia

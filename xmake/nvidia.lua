@@ -5,6 +5,8 @@ target("llaisys-device-nvidia")
     set_values("cuda.rdc", false)
     add_cuflags("-Xcompiler=-fPIC", {force = true})
     add_links("cublas")
+    add_links("cudnn")
+    add_links("nvrtc")
 
     add_files("../src/device/nvidia/*.cu")
 
@@ -19,6 +21,8 @@ target("llaisys-ops-nvidia")
     set_values("cuda.rdc", false)
     add_cuflags("-Xcompiler=-fPIC", {force = true})
     add_links("cublas")
+    add_links("cudnn")
+    add_links("nvrtc")
 
     add_files("../src/ops/*/nvidia/*.cu")
 
