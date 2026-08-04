@@ -4,6 +4,9 @@
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 
+// V1：手写 kernel。cuDNN Graph API 的 RoPE 节点（9.24+ 才有）探索过一版，但只支持
+// f16/bf16（不支持 f32，官方文档：https://docs.nvidia.com/deeplearning/cudnn/latest/operations/RoPE.html），
+// 需要 f32 时 fallback 回这版 + 额外算一个 FREQS 角度张量，先放一放，退回这版手写实现。
 // 1. Kernel：只负责 GPU 上的具体计算
 template <typename T>
 __global__ void rope_kernel(T *out, const T *in, const int64_t *pos_ids, float theta,

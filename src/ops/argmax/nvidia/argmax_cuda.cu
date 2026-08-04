@@ -15,6 +15,9 @@
         }                                                                        \
     } while (0)
 
+// V1：手写的两轮 kernel。cuDNN 的 cudnnReduceTensor 试过一版（能一次给出 value+index），
+// 但那是 cuDNN 已弃用的 legacy ops API，且 Graph API 没有对应的带 index 输出的归约节点，
+// 加上 BF16 会报 CUDNN_STATUS_NOT_SUPPORTED，所以退回这版手写实现。
 template <typename T>
 __global__ void argmax_kernel(int64_t *block_idx, T *block_val, const T *vals, size_t numel, const int64_t *idx_map) {
 
@@ -69,12 +72,6 @@ void launch_argmax(int64_t *max_idx, T *max_val, const T *vals, size_t numel) {
     int64_t *idx_ptr = nullptr;
     CHECK_CUDA(cudaMalloc(reinterpret_cast<void **>(&idx_ptr), grid_size * sizeof(int64_t)));
     argmax_kernel<<<grid_size, block_size, shared_bytes>>>(idx_ptr,val_ptr, vals, numel,nullptr);
-    // 按方案 (b)，这里要变成两轮 kernel launch，而不是现在这一行：
-    //   1) 第一轮：grid_size 按 numel 算（下面这行本身没错），但 kernel 不能直接写 max_idx/max_val——
-    //      那俩只有 1 个元素的空间，装不下 gridDim.x 个 block 各自的候选结果。要先 cudaMalloc 一块
-    //      中间缓冲区（T 类型 grid_size 个 + int64_t 类型 grid_size 个），第一轮写到这块中间缓冲区。
-    //   2) 第二轮：<<<1, block_size>>>，输入换成第一轮的中间缓冲区（numel 换成 grid_size），
-    //      这次才真正写 max_idx/max_val。跑完记得 cudaFree 中间缓冲区。
     argmax_kernel<<<1, block_size, shared_bytes>>>(max_idx, max_val, val_ptr, grid_size,idx_ptr);
     CHECK_CUDA(cudaFree(val_ptr));
     CHECK_CUDA(cudaFree(idx_ptr));
