@@ -127,29 +127,36 @@ void linear(std::byte *out, const std::byte *in, const std::byte *weight, const 
         const float alpha = 1.0f;
         const float beta = 0.0f;
 
+        const int m = static_cast<int>(M);
+        const int n = static_cast<int>(N);
+        const int k = static_cast<int>(K);
+
+
         const auto *in_bf16 =  reinterpret_cast<const __nv_bfloat16*>(in);
         const auto *weight_bf16 = reinterpret_cast<const __nv_bfloat16 *>(weight);
         const auto *bias_bf16 = reinterpret_cast<const __nv_bfloat16 *>(bias);
         auto *out_bf16 = reinterpret_cast<__nv_bfloat16 *>(out);
 
-        cublasStatus_t status = cublasSgemmEx(
-            handle,
-            CUBLAS_OP_T,
-            CUBLAS_OP_N,
-            static_cast<int>(N),
-            static_cast<int>(M),
-            static_cast<int>(K),
-            &alpha,
-            weight_bf16,
-            CUDA_R_16BF,
-            static_cast<int>(K),
-            in_bf16,
-            CUDA_R_16BF,
-            static_cast<int>(K),
-            &beta,
-            out_bf16,
-            CUDA_R_16BF,
-            static_cast<int>(N)
+        cublasStatus_t status = cublasGemmEx(
+        handle,
+        CUBLAS_OP_T,
+        CUBLAS_OP_N,
+        n,
+        m,
+        k,
+        &alpha,
+        weight_bf16,
+        CUDA_R_16BF,
+        k,
+        in_bf16,
+        CUDA_R_16BF,
+        k,
+        &beta,
+        out_bf16,
+        CUDA_R_16BF,
+        n,
+        CUDA_R_32F,
+        CUBLAS_GEMM_DEFAULT
         );
         assert(status == CUBLAS_STATUS_SUCCESS);
         printf("dtype bf16 %d\n", status);
