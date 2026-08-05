@@ -87,19 +87,6 @@ void linear(std::byte *out, const std::byte *in, const std::byte *weight, const 
     switch (type) {
     case LLAISYS_DTYPE_F32:
     {
-        // TODO(合并乘加): 目前是 out = alpha*(in @ weight^T) + beta*out（beta=0），
-        // 算完之后再单独跑一个 add_bias_kernel 把 bias 加上去，等于乘法和加法是两个
-        // 独立的 kernel launch。cuBLAS 的 GEMM 本来就支持 `beta*out` 这一项，可以把
-        // bias 加法“借用”这个 beta 项来做，从而少一次单独的 add 步骤：
-        //   1. 调用 GEMM 之前，先把 bias（长度 N 的向量）广播写进 out 的每一行
-        //      （比如用 cudaMemcpy2D，把 srcPitch 设成 0，这样每一行都会从
-        //      bias 起始地址重复读取，达到广播效果，不用自己写 broadcast kernel）。
-        //   2. 把下面的 beta 从 0.0f 改成 1.0f。
-        //   3. 这样 GEMM 算出来就是 out = alpha*(in @ weight^T) + 1.0f*out，
-        //      而这时候 out 里已经是 bias 了——矩阵乘法的结果直接累加到 bias 上，
-        //      不用再跑 add_bias_kernel。
-        // 只有 bias != nullptr 时才做广播 + beta=1；bias 为空时还是维持 beta=0。
-        // BF16/F16 分支是完全一样的思路，可以照抄这里改完之后再搬过去。
         const float alpha = 1.0f;
         const float beta = 0.0f;
 

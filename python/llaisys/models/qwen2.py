@@ -1,5 +1,6 @@
 from typing import Sequence
 
+import contextlib
 import ctypes
 from ..libllaisys.llaisys_types import DataType
 from ..libllaisys import LIB_LLAISYS
@@ -102,6 +103,7 @@ class Qwen2:
         top_k: int = 1,
         top_p: float = 0.8,
         temperature: float = 0.8,
+        step_context=None,
     ):
         #1校验输入正确xing
         if max_new_tokens is None:
@@ -114,11 +116,16 @@ class Qwen2:
         # 第一轮 current_input 是整个 prompt（相当于 prefill），
         # 之后每轮 current_input 只是上一步新生成的那一个 token（decode）
         current_input = generated_tokens
-        for _ in range(max_new_tokens):
+        for step in range(max_new_tokens):
             token_array = (ctypes.c_int64 * len(current_input))(*current_input)
-            next_token = LIB_LLAISYS.llaisysQwen2ModelInfer(
-                self.model, token_array, len(current_input)
-            )
+            # step_context lets a caller (e.g. a benchmark script) wrap each Infer
+            # call to time/label prefill vs decode steps without generate() itself
+            # depending on any profiling library.
+            ctx = step_context(step, step == 0) if step_context else contextlib.nullcontext()
+            with ctx:
+                next_token = LIB_LLAISYS.llaisysQwen2ModelInfer(
+                    self.model, token_array, len(current_input)
+                )
             generated_tokens.append(next_token)
             # 判断 next_token 是否等于 self.meta.end_token，是的话 break
             if next_token == self.meta.end_token:

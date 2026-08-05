@@ -248,7 +248,18 @@ __C {
         ops::argmax(max_idx,max_val,last_logits_1d);
 
         model->cur_len = total_len;
-        return *reinterpret_cast<int64_t*>(max_idx->data());
+        if (device == LLAISYS_DEVICE_CPU) {
+            return *reinterpret_cast<int64_t *>(max_idx->data());
+        } else {
+            int64_t host_max_idx = 0;
+            llaisys::core::context().runtime().api()->memcpy_sync(
+                &host_max_idx,
+                max_idx->data(),
+                sizeof(int64_t),
+                LLAISYS_MEMCPY_D2H
+            );
+            return host_max_idx;
+        }
     }
 }
 
