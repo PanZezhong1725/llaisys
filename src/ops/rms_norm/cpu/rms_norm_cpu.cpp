@@ -32,12 +32,12 @@ void rms_norm_impl(
 
         // 计算均方根倒数，避免在下面的循环中多次除法运算
         float mean_of_squares = sum_of_squares / static_cast<float>(norm_size);
-        float inv_rms = 1.0 / std::sqrt(mean_of_squares + eps);
+        float inv_rms = 1.0f / std::sqrt(mean_of_squares + eps);
 
         // 归一化，并乘以权重
         for (size_t i =0; i < norm_size; ++i) {
-            float val = 0.0;
-            float scale = 0.0;
+            float val = 0.0f;
+            float scale = 0.0f;
             if constexpr (std::is_same_v<T, llaisys::bf16_t> || std::is_same_v<T, llaisys::fp16_t>) {
                 val = llaisys::utils::cast<float>(in[start + i]);
                 scale = llaisys::utils::cast<float>(weight[i]);
