@@ -3,6 +3,7 @@
 #include "../../core/llaisys_core.hpp"
 #include "../../utils.hpp"
 #include "nvidia/self_attention_cuda.cuh"
+#include "iluvatar/self_attention_iluvatar.cuh"
 
 // V3: 支持 GQA,要求 nhead 是 nkvhead 的整数倍。
 // attn_val, q : [seqlen,    nhead,   d ] / [seqlen,    nhead,   dv]
@@ -46,6 +47,14 @@ void self_attention(tensor_t attn_val, tensor_t q, tensor_t k, tensor_t v, float
     case LLAISYS_DEVICE_NVIDIA: {
         auto resource = llaisys::core::context().runtime().resource();
         llaisys::ops::cuda::self_attention(attn_val->data(), q->data(), k->data(), v->data(),
+                                           attn_val->dtype(), seqlen, total_len, nhead, nkvhead, d, dv, scale, resource);
+        return;
+    }
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    case LLAISYS_DEVICE_ILUVATAR: {
+        auto resource = llaisys::core::context().runtime().resource();
+        llaisys::ops::iluvatar::self_attention(attn_val->data(), q->data(), k->data(), v->data(),
                                            attn_val->dtype(), seqlen, total_len, nhead, nkvhead, d, dv, scale, resource);
         return;
     }

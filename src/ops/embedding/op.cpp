@@ -4,6 +4,7 @@
 
 #include "cpu/embedding.hpp"
 #include "nvidia/embedding_cuda.cuh"
+#include "iluvatar/embedding_iluvatar.cuh"
 
 namespace llaisys::ops {
 void embedding(tensor_t out, tensor_t index, tensor_t weight) {
@@ -24,6 +25,12 @@ void embedding(tensor_t out, tensor_t index, tensor_t weight) {
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
         cuda::embedding(out->data(), index->data(), weight->data(),
+                               out->dtype(), index->numel(), weight->shape()[1]);
+        return;
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    case LLAISYS_DEVICE_ILUVATAR:
+        iluvatar::embedding(out->data(), index->data(), weight->data(),
                                out->dtype(), index->numel(), weight->shape()[1]);
         return;
 #endif

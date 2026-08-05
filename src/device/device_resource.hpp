@@ -25,6 +25,9 @@ namespace cpu { DeviceResource *getDeviceResource(); }
 #ifdef ENABLE_NVIDIA_API
 namespace nvidia { DeviceResource *getDeviceResource(int device_id); }
 #endif
+#ifdef ENABLE_ILUVATAR_API
+namespace iluvatar { DeviceResource *getDeviceResource(int device_id); }
+#endif
 
 
 } // namespace llaisys::device

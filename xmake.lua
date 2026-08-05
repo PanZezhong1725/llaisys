@@ -52,6 +52,9 @@ target("llaisys-device")
     if has_config("nv-gpu") then
         add_deps("llaisys-device-nvidia")
     end
+    if has_config("iluvatar-gpu") then
+        add_deps("llaisys-device-iluvatar")
+    end
 
     set_languages("cxx17")
     set_warnings("all", "error")
@@ -100,6 +103,9 @@ target("llaisys-ops")
     add_deps("llaisys-ops-cpu")
     if has_config("nv-gpu") then
         add_deps("llaisys-ops-nvidia")
+    end
+    if has_config("iluvatar-gpu") then
+        add_deps("llaisys-ops-iluvatar")
     end
 
     set_languages("cxx17")

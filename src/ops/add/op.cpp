@@ -3,6 +3,7 @@
 #include "../../core/llaisys_core.hpp"
 #include "../../utils.hpp"
 #include "nvidia/add_cuda.cuh"
+#include "iluvatar/add_iluvatar.cuh"
 #include "cpu/add_cpu.hpp"
 
 namespace llaisys::ops {
@@ -26,6 +27,10 @@ void add(tensor_t c, tensor_t a, tensor_t b) {
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
         return cuda::add(c->data(), a->data(), b->data(), c->dtype(), c->numel());
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    case LLAISYS_DEVICE_ILUVATAR:
+        return iluvatar::add(c->data(), a->data(), b->data(), c->dtype(), c->numel());
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

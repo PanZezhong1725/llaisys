@@ -5,6 +5,7 @@
 
 #include "cpu/swiglu_cpu.hpp"
 #include "nvidia/swiglu_cuda.cuh"
+#include "iluvatar/swiglu_iluvatar.cuh"
 
 namespace llaisys::ops {
 void swiglu(tensor_t out, tensor_t gate, tensor_t up) {
@@ -28,6 +29,11 @@ void swiglu(tensor_t out, tensor_t gate, tensor_t up) {
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
         cuda::swiglu(out->data(), gate->data(), up->data(), out->dtype(), out->shape()[0], out->shape()[1]);
+        return;
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    case LLAISYS_DEVICE_ILUVATAR:
+        iluvatar::swiglu(out->data(), gate->data(), up->data(), out->dtype(), out->shape()[0], out->shape()[1]);
         return;
 #endif
     default:

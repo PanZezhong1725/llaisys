@@ -27,6 +27,11 @@ void rearrange(tensor_t out, tensor_t in) {
         TO_BE_IMPLEMENTED();
         return;
 #endif
+#ifdef ENABLE_ILUVATAR_API
+    case LLAISYS_DEVICE_ILUVATAR:
+        TO_BE_IMPLEMENTED();
+        return;
+#endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;
     }

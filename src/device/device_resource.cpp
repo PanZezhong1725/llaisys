@@ -13,6 +13,13 @@ DeviceResource * getDeviceResource(llaisysDeviceType_t device_type, int device_i
         EXCEPTION_UNSUPPORTED_DEVICE;
         return nullptr;
 #endif
+    case LLAISYS_DEVICE_ILUVATAR:
+#ifdef ENABLE_ILUVATAR_API
+        return iluvatar::getDeviceResource(device_id);
+#else
+        EXCEPTION_UNSUPPORTED_DEVICE;
+        return nullptr;
+#endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;
         return nullptr;
