@@ -53,9 +53,17 @@ fi
 
 echo
 echo "===================================================="
-echo "[3] xmake install（把 .so 拷进 python 包）"
+echo "[3] xmake install（把 .so 拷进 python 包）+ pip 可编辑安装"
 echo "===================================================="
 xmake install 2>&1
+echo
+python3 -c "import llaisys" 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "llaisys 包还没装，执行 pip install -e ./python"
+    pip install -e ./python 2>&1
+else
+    echo "llaisys 包已可以 import，跳过 pip install"
+fi
 
 echo
 echo "===================================================="
