@@ -19,7 +19,27 @@ git log --oneline -3
 
 echo
 echo "===================================================="
-echo "[1] xmake 配置 + 完整构建 (iluvatar-gpu=y)"
+echo "[1] 确保 libcudadevrt 桩库存在"
+echo "===================================================="
+# 天数智芯的 corex SDK 没有 libcudadevrt.a（用于 relocatable device code 链接），
+# 但我们两个 target 都设了 cuda.rdc=false，实际功能上用不到这个库——
+# xmake 内置的 cuda 规则却无条件在链接命令里加 -lcudadevrt，不管 rdc 是否为 false。
+# 建一个空的桩静态库满足链接器即可，不会被真正用到任何符号。
+STUB_DIR="/usr/local/corex-4.4.0/lib64"
+STUB_LIB="${STUB_DIR}/libcudadevrt.a"
+if [ -f "$STUB_LIB" ]; then
+    echo "已存在: $STUB_LIB"
+    file "$STUB_LIB"
+else
+    echo "创建空桩库: $STUB_LIB"
+    ar rcs "$STUB_LIB"
+    ls -la "$STUB_LIB"
+    file "$STUB_LIB"
+fi
+
+echo
+echo "===================================================="
+echo "[2] xmake 配置 + 完整构建 (iluvatar-gpu=y)"
 echo "===================================================="
 xmake f -c --iluvatar-gpu=y 2>&1
 echo
@@ -33,13 +53,13 @@ fi
 
 echo
 echo "===================================================="
-echo "[2] xmake install（把 .so 拷进 python 包）"
+echo "[3] xmake install（把 .so 拷进 python 包）"
 echo "===================================================="
 xmake install 2>&1
 
 echo
 echo "===================================================="
-echo "[3] 逐个跑 8 个算子的 --device iluvatar 测试"
+echo "[4] 逐个跑 8 个算子的 --device iluvatar 测试"
 echo "===================================================="
 for op in add argmax embedding linear rms_norm rope self_attention swiglu; do
     echo "---- test/ops/${op}.py --device iluvatar ----"
@@ -50,7 +70,7 @@ done
 
 echo
 echo "===================================================="
-echo "[4] test_runtime.py --device iluvatar"
+echo "[5] test_runtime.py --device iluvatar"
 echo "===================================================="
 python3 test/test_runtime.py --device iluvatar 2>&1
 echo "--- exit code: $? ---"

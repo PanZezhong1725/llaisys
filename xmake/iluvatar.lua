@@ -34,6 +34,12 @@ target("llaisys-device-iluvatar")
     add_cuflags("-fPIC", {force = true})
     add_links("cublas")
     add_links("cudnn")
+    -- Iluvatar's SDK only ships libcudart.so, not libcudart_static.a. Linking
+    -- "cudart" explicitly here satisfies xmake's built-in cuda rule (which
+    -- auto-adds "cudart_static" unless a cudart link is already present) so
+    -- it picks up the real shared library instead of a static one that
+    -- doesn't exist on this platform.
+    add_links("cudart")
 
     add_files("../src/device/iluvatar/*.cu")
     add_linkdirs("/usr/local/corex-4.4.0/lib64")
@@ -52,6 +58,7 @@ target("llaisys-ops-iluvatar")
     add_cuflags("-fPIC", {force = true})
     add_links("cublas")
     add_links("cudnn")
+    add_links("cudart")
 
     add_files("../src/ops/*/iluvatar/*.cu")
 
