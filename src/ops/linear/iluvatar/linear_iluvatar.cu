@@ -4,7 +4,6 @@
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include "../../../device/iluvatar/iluvatar_resource.cuh"
-#include <cassert>
 #define CEIL(a, b) (((a) + (b) - 1) / (b))
 /* 练手用的 tiled-GEMM 手写 kernel，现在 F32/BF16/F16 都已经改用 cublas 计算，
    下面这段暂时不再被调用，留着当参考。
@@ -112,8 +111,6 @@ void linear(std::byte *out, const std::byte *in, const std::byte *weight, const 
             out_f32,
             static_cast<int>(N)
         );
-        assert(status == CUBLAS_STATUS_SUCCESS);
-        // printf("%d\n", status);
         if(bias != nullptr){
         constexpr int block_size = 256;
         int grid_size = static_cast<int>(CEIL(M * N,block_size));
@@ -158,8 +155,6 @@ void linear(std::byte *out, const std::byte *in, const std::byte *weight, const 
         CUDA_R_32F,
         CUBLAS_GEMM_DEFAULT
         );
-        assert(status == CUBLAS_STATUS_SUCCESS);
-        printf("dtype bf16 %d\n", status);
         if(bias != nullptr){
         constexpr int block_size = 256;
         int grid_size = static_cast<int>(CEIL(M * N,block_size));
@@ -199,7 +194,6 @@ void linear(std::byte *out, const std::byte *in, const std::byte *weight, const 
             CUDA_R_16F,
             static_cast<int>(N)
         );
-        assert(status == CUBLAS_STATUS_SUCCESS);
         if(bias != nullptr){
         constexpr int block_size = 256;
         int grid_size = static_cast<int>(CEIL(M * N,block_size));
