@@ -113,6 +113,7 @@ void linear(std::byte *out, const std::byte *in, const std::byte *weight, const 
             static_cast<int>(N)
         );
         assert(status == CUBLAS_STATUS_SUCCESS);
+        // printf("%d\n", status);
         if(bias != nullptr){
         constexpr int block_size = 256;
         int grid_size = static_cast<int>(CEIL(M * N,block_size));
@@ -151,6 +152,7 @@ void linear(std::byte *out, const std::byte *in, const std::byte *weight, const 
             static_cast<int>(N)
         );
         assert(status == CUBLAS_STATUS_SUCCESS);
+        printf("%d\n", status);
         if(bias != nullptr){
         constexpr int block_size = 256;
         int grid_size = static_cast<int>(CEIL(M * N,block_size));
