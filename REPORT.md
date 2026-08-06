@@ -114,7 +114,15 @@ llaisys 目前比 HF 慢约 5 倍。用新写的 `test/benchmark_infer.py`（把
 
 根因：`self_attention_cuda.cu` 里 cuDNN 的 SDPA 图（`cudnn_frontend::graph::Graph`）**每次调用都从头构建**（`validate → build_operation_graph → create_execution_plans → build_plans`），代码里早就留了这条 TODO 但一直没验证影响有多大。对 `qlen=1, kvlen=20` 这么小的计算量，真正的矩阵运算应该是微秒级，20ms 基本全是建图开销，不是算力开销。
 
-**下一步（尚未实现）**：把已经 build 好的图按 shape（`seqlen, total_len, nhead, nkvhead, d, dv`）缓存起来，decode 阶段除了 `total_len` 逐步 +1 之外其他维度都不变，命中缓存时直接复用，不用每次都重新走一遍建图流程。
+**关键设计难点**：decode 阶段 `total_len`（KV-cache 已有长度）每一步都 +1，而现在 K/V 的 `Tensor_attributes` 把 `total_len` 直接焊进了 graph 的静态维度里。如果按 `(dtype, seqlen, total_len, nhead, nkvhead, d, dv)` 精确匹配做缓存，decode 阶段每步的 `total_len` 都不一样，**缓存永远不会命中，等于白做**——这是真正要解决的问题，不是"随便加个 map 缓存"这么简单。
+
+**研究了几条路，记录一下结论（新开的 `perf/self-attention-graph-cache` 分支上做）：**
+
+1. **cuDNN Graph API 自己的动态 shape 机制**（`Graph::set_dynamic_shape_enabled(true)`）：存在，要求 cuDNN backend ≥ 9.4.0（本机 9.20.0 满足）。但翻 `sdpa_support_surface.h` 发现 SDPA 节点内部有 "Composite" 和 "Unified" 两套引擎实现，**"Unified" 引擎明确拒绝动态 shape**（`"Unified SDPA node doesn't yet support dynamic shape"`），而具体选哪个引擎是 cuDNN 内部 heuristic 决定的，代码里控制不了——用这条路有真实的不确定性。
+2. **cuDNN 本来设计的"变长实际长度 + 固定 padding 后 shape"机制**（`ragged_offset`、`SEQ_LEN_Q`/`SEQ_LEN_KV`，这正是下面第 3 点里说的生产级做法在 cuDNN API 里的对应物）：翻 `graph_properties.h` 发现 `set_seq_len_q`/`set_seq_len_kv` 这两个方法在这个 cudnn_frontend 版本里**是被注释掉的**，没有真正开放——目前这条路在这个 SDK 版本走不通。
+3. **真实生产推理引擎一般怎么解决这个问题**：vLLM、TensorRT-LLM 这类引擎的核心 attention kernel 大多是手写模板 kernel（FlashAttention 那一套），`seqlen`/`total_len` 就是普通运行时参数，不是编译期/建图期焊死的常量——kernel 编译一次，之后随便什么长度直接传参调用，零建图开销。这跟 llaisys 自己那个 **V1 手写 fallback kernel** 是同一种设计哲学；某种意义上 V1 kernel 反而比 cuDNN Graph API 这条路径更接近"真实生产引擎"的做法，只是牺牲了 cuDNN 的算子融合/tensor core 调度带来的峰值算力。vLLM 的 PagedAttention 把这思路又往前推了一步（KV cache 用固定大小的页 + 页表间接寻址）。
+
+**下一步（尚未实现，还有个真实的坑没解决）**：既然第 1、2 条路子目前都用不了，剩下能想的是**分桶**——把 `total_len` 向上取整到某个固定粒度（比如 64 的倍数），同一个桶内复用同一张已建好的图。但这里不是简单"缓存 key 换成桶号"就完事：cuDNN 的 `Tensor_attributes.set_dim()` 要求 K/V 的声明维度和实际数据维度精确一致，图是按"取整后的桶大小"建的，就意味着**每次调用都要把 K/V 实际数据 pad 到桶大小**，而 `causal_mask_bottom_right` 默认的因果对齐是"最后一个 query token 对齐最后一个 key token"——如果桶大小 > 真实 `total_len`，padding 出来的那部分 key 会被当成"更靠后的真实 token"参与因果对齐判断，不会被现有的因果 mask 自动排除，**会算出错误结果，不只是白算**。要做对，需要额外的显式 mask/bias 输入把 padding 部分标记为无效（不能只靠 `causal_mask_bottom_right` 本身），这块的具体做法还没设计，是下一步真正要解决的问题，不是纯粹的"加个缓存 map"这么轻松。
 
 ### Profiling 工具踩坑记录
 
