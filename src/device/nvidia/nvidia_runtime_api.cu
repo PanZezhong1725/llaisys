@@ -1,75 +1,78 @@
-#include "../runtime_api.hpp"
+// src/device/nvidia/nvidia_runtime_api.cu
+// NVIDIA CUDA Runtime API implementation
 
-#include <cstdlib>
+#include <cuda_runtime.h>
+#include "llaisys/runtime.h"
 #include <cstring>
 
-namespace llaisys::device::nvidia {
-
-namespace runtime_api {
-int getDeviceCount() {
-    TO_BE_IMPLEMENTED();
+// Memory management
+static llaisysResult_t nvidia_malloc(void **ptr, size_t size) {
+    cudaError_t err = cudaMalloc(ptr, size);
+    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
 }
 
-void setDevice(int) {
-    TO_BE_IMPLEMENTED();
+static llaisysResult_t nvidia_free(void *ptr) {
+    cudaError_t err = cudaFree(ptr);
+    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
 }
 
-void deviceSynchronize() {
-    TO_BE_IMPLEMENTED();
+// Memory copy operations
+static llaisysResult_t nvidia_memcpy_h2d(void *dst, const void *src, size_t size) {
+    cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice);
+    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
 }
 
-llaisysStream_t createStream() {
-    TO_BE_IMPLEMENTED();
+static llaisysResult_t nvidia_memcpy_d2h(void *dst, const void *src, size_t size) {
+    cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost);
+    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
 }
 
-void destroyStream(llaisysStream_t stream) {
-    TO_BE_IMPLEMENTED();
-}
-void streamSynchronize(llaisysStream_t stream) {
-    TO_BE_IMPLEMENTED();
+static llaisysResult_t nvidia_memcpy_d2d(void *dst, const void *src, size_t size) {
+    cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyDeviceToDevice);
+    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
 }
 
-void *mallocDevice(size_t size) {
-    TO_BE_IMPLEMENTED();
+// Memory set
+static llaisysResult_t nvidia_memset(void *ptr, int value, size_t size) {
+    cudaError_t err = cudaMemset(ptr, value, size);
+    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
 }
 
-void freeDevice(void *ptr) {
-    TO_BE_IMPLEMENTED();
+// Synchronization
+static llaisysResult_t nvidia_synchronize() {
+    cudaError_t err = cudaDeviceSynchronize();
+    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
 }
 
-void *mallocHost(size_t size) {
-    TO_BE_IMPLEMENTED();
+// Device management
+static llaisysResult_t nvidia_set_device(int device_id) {
+    cudaError_t err = cudaSetDevice(device_id);
+    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
 }
 
-void freeHost(void *ptr) {
-    TO_BE_IMPLEMENTED();
+static llaisysResult_t nvidia_get_device(int *device_id) {
+    cudaError_t err = cudaGetDevice(device_id);
+    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
 }
 
-void memcpySync(void *dst, const void *src, size_t size, llaisysMemcpyKind_t kind) {
-    TO_BE_IMPLEMENTED();
+static llaisysResult_t nvidia_get_device_count(int *count) {
+    cudaError_t err = cudaGetDeviceCount(count);
+    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
 }
 
-void memcpyAsync(void *dst, const void *src, size_t size, llaisysMemcpyKind_t kind) {
-    TO_BE_IMPLEMENTED();
+// Register API
+extern "C" const LlaisysRuntimeAPI *llaisysGetNvidiaRuntimeAPI() {
+    static LlaisysRuntimeAPI api = {
+        .malloc = nvidia_malloc,
+        .free = nvidia_free,
+        .memcpy_h2d = nvidia_memcpy_h2d,
+        .memcpy_d2h = nvidia_memcpy_d2h,
+        .memcpy_d2d = nvidia_memcpy_d2d,
+        .memset = nvidia_memset,
+        .synchronize = nvidia_synchronize,
+        .set_device = nvidia_set_device,
+        .get_device = nvidia_get_device,
+        .get_device_count = nvidia_get_device_count,
+    };
+    return &api;
 }
-
-static const LlaisysRuntimeAPI RUNTIME_API = {
-    &getDeviceCount,
-    &setDevice,
-    &deviceSynchronize,
-    &createStream,
-    &destroyStream,
-    &streamSynchronize,
-    &mallocDevice,
-    &freeDevice,
-    &mallocHost,
-    &freeHost,
-    &memcpySync,
-    &memcpyAsync};
-
-} // namespace runtime_api
-
-const LlaisysRuntimeAPI *getRuntimeAPI() {
-    return &runtime_api::RUNTIME_API;
-}
-} // namespace llaisys::device::nvidia
