@@ -104,9 +104,7 @@ class Qwen2:
     def _load_weights(self, model_path: Path):
         """Load model weights from safetensors files"""
         import numpy as np
-        import torch
         import gc
-        import mmap
         
         for file in sorted(model_path.glob("*.safetensors")):
             print(f"Loading {file.name}...", flush=True)
@@ -136,34 +134,57 @@ class Qwen2:
                     shape = info["shape"]
                     data_offsets = info["data_offsets"]
                     
-                    # Calculate tensor size
+                    # Read tensor data in small chunks to avoid memory issues
+                    data_size = data_offsets[1] - data_offsets[0]
+                    chunk_size = 4 * 1024 * 1024  # 4MB chunks
+                    
+                    # Determine numpy dtype
+                    if dtype_str == "BF16":
+                        np_dtype = np.uint16
+                    elif dtype_str == "F32":
+                        np_dtype = np.float32
+                    elif dtype_str == "F16":
+                        np_dtype = np.float16
+                    elif dtype_str == "I64":
+                        np_dtype = np.int64
+                    else:
+                        print(f"    Warning: Unsupported dtype {dtype_str}, skipping", flush=True)
+                        continue
+                    
+                    # Calculate number of elements
                     numel = 1
                     for s in shape:
                         numel *= s
                     
-                    # Read tensor data
-                    f.seek(data_start + data_offsets[0])
-                    data_bytes = f.read(data_offsets[1] - data_offsets[0])
-                    
-                    # Convert to numpy array - keep original dtype to save memory
-                    if dtype_str == "BF16":
-                        # bfloat16 - read as uint16, pass directly to C++
-                        tensor_data = np.frombuffer(data_bytes, dtype=np.uint16).reshape(shape)
-                    elif dtype_str == "F32":
-                        tensor_data = np.frombuffer(data_bytes, dtype=np.float32).reshape(shape)
-                    elif dtype_str == "F16":
-                        tensor_data = np.frombuffer(data_bytes, dtype=np.float16).reshape(shape)
-                    elif dtype_str == "I64":
-                        tensor_data = np.frombuffer(data_bytes, dtype=np.int64).reshape(shape)
+                    # Read and process in chunks
+                    if data_size > chunk_size:
+                        # Large tensor - process in chunks
+                        chunks = []
+                        bytes_read = 0
+                        while bytes_read < data_size:
+                            f.seek(data_start + data_offsets[0] + bytes_read)
+                            read_size = min(chunk_size, data_size - bytes_read)
+                            chunk_bytes = f.read(read_size)
+                            chunk_data = np.frombuffer(chunk_bytes, dtype=np_dtype)
+                            chunks.append(chunk_data)
+                            bytes_read += read_size
+                            del chunk_bytes
+                            del chunk_data
+                        
+                        # Concatenate chunks
+                        tensor_data = np.concatenate(chunks).reshape(shape)
+                        del chunks
                     else:
-                        print(f"    Warning: Unsupported dtype {dtype_str}, skipping", flush=True)
-                        continue
+                        # Small tensor - read all at once
+                        f.seek(data_start + data_offsets[0])
+                        data_bytes = f.read(data_size)
+                        tensor_data = np.frombuffer(data_bytes, dtype=np_dtype).reshape(shape)
+                        del data_bytes
                     
                     self._load_weight(name_, tensor_data)
                     
                     # Free memory immediately
                     del tensor_data
-                    del data_bytes
                     gc.collect()
                     
                     if i % 50 == 0:
