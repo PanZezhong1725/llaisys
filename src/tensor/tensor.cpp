@@ -231,7 +231,7 @@ tensor_t Tensor::view(const std::vector<size_t> &shape) const {
             if (!chunk_ends) {
                 continue;
             }
-
+// 测试
             while (view_dim >= 0
                    && (view_elements < tensor_elements || shape[static_cast<size_t>(view_dim)] == 1)) {
                 new_strides[static_cast<size_t>(view_dim)]
