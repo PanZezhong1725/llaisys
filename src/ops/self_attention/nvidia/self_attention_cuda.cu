@@ -1,17 +1,16 @@
-#include "../../../device/nvidia/nvidia_resource.cuh"
 #include "../../../utils.hpp"
 #include "self_attention_cuda.cuh"
 #include <cstdint>
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
-#include <cudnn.h>
-#if CUDNN_MAJOR >= 8
-#include <cudnn_frontend.h>
-#endif
-// V1：手写的两遍 softmax kernel（GQA-aware，一个 block 处理一个 (query token i, head h)）。
-// cuDNN 的 SDPA 节点要求 head 维度（d/dv）必须是 8 的倍数，所以这一版留着当 fallback：
-// d 或 dv 不是 8 的倍数时用这个，其余情况走下面的 cudnn_frontend 版本。
+
+// 手写的两遍 softmax kernel（GQA-aware，一个 block 处理一个 (query token i, head h)）。
+// 之前有一版用 cuDNN 的 cudnn_frontend SDPA Graph API 做 head 维度是 8 的倍数时的加速路径，
+// 但每次调用都要重新 build graph（decode 阶段 total_len 每步都变，缓存不了），实测是解码阶段
+// 的主要瓶颈；而缓存方案又要在 causal mask 下正确处理 padding，还牵扯到 cuDNN 版本兼容性问题
+// （9.24.0 在 sm_120 上 SDPA 运行时崩溃）和 Iluvatar 平台完全没有 Graph API 的问题。综合评估后
+// 认为 cuDNN 加速这条路对这个项目现阶段不合适，已经去掉，统一用这版手写 kernel。
 // 一个 block 处理一个 (query token i, head h)；scores 用动态 shared memory 存一整行
 // （total_len 个 float），大小由 launcher 按 total_len*sizeof(float) 申请。
 template <typename T>
@@ -93,13 +92,6 @@ void launch_self_attention(T *attn_val, const T *q, const T *k, const T *v,
         attn_val, q, k, v, seqlen, total_len, nhead, nkvhead, d, dv, scale);
 }
 
-// V2：hd 是 8 的倍数时走这条路——cudnn_frontend（v1.26.0）的 Graph API + 现成的 SDPA
-// 节点（原生支持 GQA，不用自己拆 kv head）。参考实现见 cudnn-frontend 仓库的
-// samples/cpp/sdpa/fp16_fwd.cpp。
-//
-// TODO：现在每次调用都重新建一次 graph、重新 build 一次执行计划——先跑通正确性，
-// 回头如果发现这部分开销明显，再考虑要不要把 Graph（按 shape 分组）缓存到 Resource 上。
-
 namespace llaisys::ops::cuda {
 // q        : [seqlen,    nhead,   d ]
 // k        : [total_len, nkvhead, d ]
@@ -111,138 +103,7 @@ namespace llaisys::ops::cuda {
 void self_attention(std::byte *attn_val, const std::byte *q, const std::byte *k, const std::byte *v,
                     llaisysDataType_t type,
                     size_t seqlen, size_t total_len, size_t nhead, size_t nkvhead, size_t d, size_t dv,
-                    float scale, llaisys::device::DeviceResource *resource) {
-    // cuDNN 的 SDPA 节点要求 head 维度是 8 的倍数，不满足就走 V1 手写 kernel。
-    if (d % 8 != 0 || dv % 8 != 0) {
-        switch (type) {
-        case LLAISYS_DTYPE_F32:
-            launch_self_attention(
-                reinterpret_cast<float *>(attn_val),
-                reinterpret_cast<const float *>(q),
-                reinterpret_cast<const float *>(k),
-                reinterpret_cast<const float *>(v),
-                seqlen, total_len, nhead, nkvhead, d, dv, scale);
-            return;
-        case LLAISYS_DTYPE_BF16:
-            launch_self_attention(
-                reinterpret_cast<__nv_bfloat16 *>(attn_val),
-                reinterpret_cast<const __nv_bfloat16 *>(q),
-                reinterpret_cast<const __nv_bfloat16 *>(k),
-                reinterpret_cast<const __nv_bfloat16 *>(v),
-                seqlen, total_len, nhead, nkvhead, d, dv, scale);
-            return;
-        case LLAISYS_DTYPE_F16:
-            launch_self_attention(
-                reinterpret_cast<__half *>(attn_val),
-                reinterpret_cast<const __half *>(q),
-                reinterpret_cast<const __half *>(k),
-                reinterpret_cast<const __half *>(v),
-                seqlen, total_len, nhead, nkvhead, d, dv, scale);
-            return;
-        default:
-            EXCEPTION_UNSUPPORTED_DATATYPE(type);
-        }
-    }
-#if CUDNN_MAJOR >= 8
-    auto handle = static_cast<llaisys::device::nvidia::Resource *>(resource)->cudnnHandle();
-
-    namespace fe = cudnn_frontend;
-    using namespace fe::graph;
-
-    fe::DataType_t io_dtype;
-    switch (type) {
-    case LLAISYS_DTYPE_F32:
-        io_dtype = fe::DataType_t::FLOAT;
-        break;
-    case LLAISYS_DTYPE_F16:
-        io_dtype = fe::DataType_t::HALF;
-        break;
-    case LLAISYS_DTYPE_BF16:
-        io_dtype = fe::DataType_t::BFLOAT16;
-        break;
-    default:
-        EXCEPTION_UNSUPPORTED_DATATYPE(type);
-    }
-
-    // 建 graph，设好 io/intermediate/compute 三个 dtype。
-    Graph graph;
-
-    graph.set_io_data_type(io_dtype)
-        .set_intermediate_data_type(fe::DataType_t::FLOAT)
-        .set_compute_data_type(fe::DataType_t::FLOAT);
-
-    // 定义 Q/K/V 三个 tensor，dim/stride 对好 llaisys 实际的 [s, h, elem_d] 内存布局。
-    auto Q = graph.tensor(
-        Tensor_attributes()
-            .set_name("Q")
-            .set_dim({1, static_cast<int64_t>(nhead), static_cast<int64_t>(seqlen), static_cast<int64_t>(d)})
-            .set_stride({static_cast<int64_t>(nhead * seqlen * d), static_cast<int64_t>(d), static_cast<int64_t>(nhead * d), 1})
-            .set_uid(1));
-
-    auto K = graph.tensor(
-        Tensor_attributes()
-            .set_name("K")
-            .set_dim({1, static_cast<int64_t>(nkvhead), static_cast<int64_t>(total_len), static_cast<int64_t>(d)})
-            .set_stride({static_cast<int64_t>(nkvhead * total_len * d), static_cast<int64_t>(d), static_cast<int64_t>(nkvhead * d), 1})
-            .set_uid(2));
-
-    auto V = graph.tensor(
-        Tensor_attributes()
-            .set_name("V")
-            .set_dim({1, static_cast<int64_t>(nkvhead), static_cast<int64_t>(total_len), static_cast<int64_t>(dv)})
-            .set_stride({static_cast<int64_t>(nkvhead * total_len * dv), static_cast<int64_t>(dv), static_cast<int64_t>(nkvhead * dv), 1})
-            .set_uid(3));
-
-    auto [O, Stats] = graph.sdpa(
-        Q,
-        K,
-        V,
-        SDPA_attributes()
-            .set_name("attention")
-            .set_is_inference(true)
-            .set_causal_mask_bottom_right(true)
-            .set_attn_scale(scale));
-
-    // O 的 dim/stride 跟 Q 用同一套 {b, h, s, elem_d} 顺序（h=nhead, s=seqlen, elem_d=dv）。
-    O->set_name("O")
-        .set_dim({1, static_cast<int64_t>(nhead), static_cast<int64_t>(seqlen), static_cast<int64_t>(dv)})
-        .set_stride({static_cast<int64_t>(nhead * seqlen * dv), static_cast<int64_t>(dv), static_cast<int64_t>(nhead * dv), 1})
-        .set_uid(4)
-        .set_output(true);
-
-    auto validate_status = graph.validate();
-    if (!validate_status.is_good()) {
-        std::cerr << "[cudnn_frontend] validate failed: " << validate_status.get_message() << std::endl;
-    }
-    auto build_og_status = graph.build_operation_graph(handle);
-    if (!build_og_status.is_good()) {
-        std::cerr << "[cudnn_frontend] build_operation_graph failed: " << build_og_status.get_message() << std::endl;
-    }
-    auto plans_status = graph.create_execution_plans({fe::HeurMode_t::A});
-    if (!plans_status.is_good()) {
-        std::cerr << "[cudnn_frontend] create_execution_plans failed: " << plans_status.get_message() << std::endl;
-    }
-    auto build_plans_status = graph.build_plans(handle);
-    if (!build_plans_status.is_good()) {
-        std::cerr << "[cudnn_frontend] build_plans failed: " << build_plans_status.get_message() << std::endl;
-    }
-
-    size_t workspace_size = graph.get_workspace_size();
-    void *workspace;
-    std::unordered_map<int64_t, void *> variant_pack = {
-        {1 /* Q 的 uid */, (void *)const_cast<std::byte *>(q)},
-        {2 /* K 的 uid */, (void *)const_cast<std::byte *>(k)},
-        {3 /* V 的 uid */, (void *)const_cast<std::byte *>(v)},
-        {4 /* O 的 uid */, (void *)attn_val},
-    };
-
-    cudaMalloc(&workspace, workspace_size);
-    auto exec_status = graph.execute(handle, variant_pack, workspace);
-    if (!exec_status.is_good()) {
-        std::cerr << "[cudnn_frontend] execute failed: " << exec_status.get_message() << std::endl;
-    }
-    cudaFree(workspace);
-#else
+                    float scale) {
     switch (type) {
     case LLAISYS_DTYPE_F32:
         launch_self_attention(
@@ -271,7 +132,6 @@ void self_attention(std::byte *attn_val, const std::byte *q, const std::byte *k,
     default:
         EXCEPTION_UNSUPPORTED_DATATYPE(type);
     }
-#endif
 }
 
 } // namespace llaisys::ops::cuda

@@ -44,20 +44,16 @@ void self_attention(tensor_t attn_val, tensor_t q, tensor_t k, tensor_t v, float
                                            attn_val->dtype(), seqlen, total_len, nhead, nkvhead, d, dv, scale);
         return;
 #ifdef ENABLE_NVIDIA_API
-    case LLAISYS_DEVICE_NVIDIA: {
-        auto resource = llaisys::core::context().runtime().resource();
+    case LLAISYS_DEVICE_NVIDIA:
         llaisys::ops::cuda::self_attention(attn_val->data(), q->data(), k->data(), v->data(),
-                                           attn_val->dtype(), seqlen, total_len, nhead, nkvhead, d, dv, scale, resource);
+                                           attn_val->dtype(), seqlen, total_len, nhead, nkvhead, d, dv, scale);
         return;
-    }
 #endif
 #ifdef ENABLE_ILUVATAR_API
-    case LLAISYS_DEVICE_ILUVATAR: {
-        auto resource = llaisys::core::context().runtime().resource();
+    case LLAISYS_DEVICE_ILUVATAR:
         llaisys::ops::iluvatar::self_attention(attn_val->data(), q->data(), k->data(), v->data(),
-                                           attn_val->dtype(), seqlen, total_len, nhead, nkvhead, d, dv, scale, resource);
+                                           attn_val->dtype(), seqlen, total_len, nhead, nkvhead, d, dv, scale);
         return;
-    }
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;
