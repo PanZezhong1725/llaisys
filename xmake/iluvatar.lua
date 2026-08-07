@@ -33,7 +33,6 @@ target("llaisys-device-iluvatar")
     add_cuflags("-std=c++17", {force = true})
     add_cuflags("-fPIC", {force = true})
     add_links("cublas")
-    add_links("cudnn")
     -- Iluvatar's SDK only ships libcudart.so, not libcudart_static.a. Linking
     -- "cudart" explicitly here satisfies xmake's built-in cuda rule (which
     -- auto-adds "cudart_static" unless a cudart link is already present) so
@@ -57,7 +56,6 @@ target("llaisys-ops-iluvatar")
     add_cuflags("-std=c++17", {force = true})
     add_cuflags("-fPIC", {force = true})
     add_links("cublas")
-    add_links("cudnn")
     add_links("cudart")
 
     add_files("../src/ops/*/iluvatar/*.cu")
