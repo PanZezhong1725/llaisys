@@ -31,6 +31,13 @@ def load_shared_library():
     if not os.path.isfile(lib_path):
         raise FileNotFoundError(f"Shared library not found: {lib_path}")
 
+    # CUDA kernels are built as a separate shared library so nvcc can perform
+    # device linking. Load it globally before the main C API library.
+    if sys.platform.startswith("linux"):
+        cuda_lib = lib_dir / "libllaisys-ops-nvidia.so"
+        if cuda_lib.is_file():
+            ctypes.CDLL(str(cuda_lib), mode=ctypes.RTLD_GLOBAL)
+
     return ctypes.CDLL(str(lib_path))
 
 

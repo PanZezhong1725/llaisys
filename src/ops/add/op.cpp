@@ -4,6 +4,9 @@
 #include "../../utils.hpp"
 
 #include "cpu/add_cpu.hpp"
+#ifdef ENABLE_NVIDIA_API
+#include "../nvidia/nvidia_ops.cuh"
+#endif
 
 namespace llaisys::ops {
 void add(tensor_t c, tensor_t a, tensor_t b) {
@@ -13,6 +16,13 @@ void add(tensor_t c, tensor_t a, tensor_t b) {
     CHECK_SAME_DTYPE(c->dtype(), a->dtype(), b->dtype());
     ASSERT(c->isContiguous() && a->isContiguous() && b->isContiguous(), "Add: all tensors must be contiguous.");
 
+    if (c->deviceType() == LLAISYS_DEVICE_NVIDIA) {
+#ifdef ENABLE_NVIDIA_API
+        return nvidia::add(c->data(), a->data(), b->data(), c->dtype(), c->numel());
+#else
+        EXCEPTION_UNSUPPORTED_DEVICE;
+#endif
+    }
     // always support cpu calculation
     if (c->deviceType() == LLAISYS_DEVICE_CPU) {
         return cpu::add(c->data(), a->data(), b->data(), c->dtype(), c->numel());
