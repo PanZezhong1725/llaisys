@@ -26,20 +26,19 @@
 
   if has_config("nv-gpu") or has_config("metax-gpu") then
       add_defines("ENABLE_NVIDIA_API")
+      includes("xmake/nvidia.lua")
 
       -- 如果是 MetaX GPU，设置编译器
       if has_config("metax-gpu") and has_metax then
           set_config("cu", path.join(metax_sdk_path, "mxgpu_llvm/bin/mxcc"))
           set_config("cu-ld", path.join(metax_sdk_path, "mxgpu_llvm/bin/mxcc"))
-          set_config("cuda", metax_sdk_path)
+          set_config("cuda", path.join(metax_sdk_path, "mxgpu_llvm"))
 
           -- 添加 MetaX 包含目录和库目录
           add_includedirs(path.join(metax_sdk_path, "include"))
           add_linkdirs(path.join(metax_sdk_path, "lib64"))
 
           print("Using MetaX C500 GPU with mxcc compiler")
-      else
-          includes("xmake/nvidia.lua")
       end
   end
 
@@ -146,6 +145,7 @@
               -- MetaX C500 特定链接
               add_linkdirs(path.join(metax_sdk_path, "lib64"))
               add_links("mcruntime", "mcblas", "mcdnn")
+              set_toolset("sh", path.join(os.projectdir(), "scripts/mxcc-ld.sh"))
 
               -- 添加 MetaX 特定的编译标志
               add_cuflags("-std=c++17", {force = true})
@@ -164,7 +164,11 @@
       else
           set_languages("cxx17")
       end
-      set_warnings("all", "error")
+      if has_config("metax-gpu") then
+          set_warnings("all")
+      else
+          set_warnings("all", "error")
+      end
       add_files("src/llaisys/*.cc")
       set_installdir(".")
 

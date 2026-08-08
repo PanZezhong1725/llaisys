@@ -34,10 +34,9 @@ target("llaisys-device-nvidia")
         add_links("mcruntime", "mcblas", "mcdnn")
         
         -- Set CUDA compiler to mxcc
-        set_config("cuda", "/opt/maca-3.5.3/mxgpu_llvm")
-        
+
         -- CUDA compilation flags for MetaX C500 (compute capability 7.5)
-        add_cuflags("-gencode arch=compute_75,code=sm_75")
+        add_cuflags("-offload-arch=xcore1000")
         add_cuflags("--expt-relaxed-constexpr")
         add_cuflags("-Xcompiler -fPIC")
         add_cuflags("-I/opt/maca-3.5.3/tools/cu-bridge/include")
@@ -86,8 +85,7 @@ target("llaisys-ops-nvidia")
         add_includedirs("/opt/maca-3.5.3/include")
         add_linkdirs("/opt/maca-3.5.3/lib64")
         add_links("mcruntime", "mcblas", "mcdnn")
-        set_config("cuda", "/opt/maca-3.5.3/mxgpu_llvm")
-        add_cuflags("-gencode arch=compute_75,code=sm_75")
+        add_cuflags("-offload-arch=xcore1000")
         add_cuflags("--expt-relaxed-constexpr")
         add_cuflags("-Xcompiler -fPIC")
         add_cuflags("-I/opt/maca-3.5.3/tools/cu-bridge/include")
