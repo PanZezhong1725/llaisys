@@ -1,81 +1,99 @@
 // src/device/nvidia/nvidia_resource.cu
-// NVIDIA CUDA resource management
+// NVIDIA CUDA / MetaX MACA resource management implementation
 
-#include <cuda_runtime.h>
-#include <cublas_v2.h>
-#include <cudnn.h>
+#include "nvidia_resource.cuh"
 
-// CUDA resource structure
-struct NvidiaResource {
-    cublasHandle_t cublas_handle;
-    cudnnHandle_t cudnn_handle;
-    cudaStream_t stream;
-};
+#include <iostream>
+#include <stdexcept>
+#include <unordered_map>
 
-// Global resource instance
-static NvidiaResource g_nvidia_resource = {nullptr, nullptr, nullptr};
+namespace llaisys::device::nvidia {
 
-// Initialize CUDA resources
-extern "C" llaisysResult_t llaisysNvidiaInit() {
-    // Initialize cuBLAS
-    cublasStatus_t cublas_status = cublasCreate(&g_nvidia_resource.cublas_handle);
-    if (cublas_status != CUBLAS_STATUS_SUCCESS) {
-        return LLAISYS_ERROR;
-    }
-    
-    // Initialize cuDNN
-    cudnnStatus_t cudnn_status = cudnnCreate(&g_nvidia_resource.cudnn_handle);
-    if (cudnn_status != CUDNN_STATUS_SUCCESS) {
-        cublasDestroy(g_nvidia_resource.cublas_handle);
-        return LLAISYS_ERROR;
-    }
-    
-    // Create CUDA stream
-    cudaError_t cuda_status = cudaStreamCreate(&g_nvidia_resource.stream);
-    if (cuda_status != cudaSuccess) {
-        cudnnDestroy(g_nvidia_resource.cudnn_handle);
-        cublasDestroy(g_nvidia_resource.cublas_handle);
-        return LLAISYS_ERROR;
-    }
-    
-    // Set stream for cuBLAS and cuDNN
-    cublasSetStream(g_nvidia_resource.cublas_handle, g_nvidia_resource.stream);
-    cudnnSetStream(g_nvidia_resource.cudnn_handle, g_nvidia_resource.stream);
-    
-    return LLAISYS_SUCCESS;
+Resource::Resource(int device_id)
+    : DeviceResource(LLAISYS_DEVICE_NVIDIA, device_id),
+      _cublas_handle(nullptr),
+      _stream(nullptr),
+      _initialized(false) {
 }
 
-// Cleanup CUDA resources
-extern "C" llaisysResult_t llaisysNvidiaCleanup() {
-    if (g_nvidia_resource.stream) {
-        cudaStreamDestroy(g_nvidia_resource.stream);
-        g_nvidia_resource.stream = nullptr;
-    }
-    
-    if (g_nvidia_resource.cudnn_handle) {
-        cudnnDestroy(g_nvidia_resource.cudnn_handle);
-        g_nvidia_resource.cudnn_handle = nullptr;
-    }
-    
-    if (g_nvidia_resource.cublas_handle) {
-        cublasDestroy(g_nvidia_resource.cublas_handle);
-        g_nvidia_resource.cublas_handle = nullptr;
-    }
-    
-    return LLAISYS_SUCCESS;
+Resource::~Resource() {
+    cleanup();
 }
 
-// Get cuBLAS handle
-extern "C" cublasHandle_t llaisysNvidiaGetCublasHandle() {
-    return g_nvidia_resource.cublas_handle;
+void Resource::init() {
+    if (_initialized) {
+        return;
+    }
+
+    // Set device
+    cudaError_t err = cudaSetDevice(getDeviceId());
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaSetDevice failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("Failed to set CUDA device");
+    }
+
+    // Create stream
+    err = cudaStreamCreate(&_stream);
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaStreamCreate failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("Failed to create CUDA stream");
+    }
+
+    // Create cuBLAS handle
+    cublasStatus_t status = cublasCreate(&_cublas_handle);
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        std::cerr << "[ERROR] cublasCreate failed: " << status << std::endl;
+        cudaStreamDestroy(_stream);
+        throw std::runtime_error("Failed to create cuBLAS handle");
+    }
+
+    // Set stream for cuBLAS
+    status = cublasSetStream(_cublas_handle, nullptr);
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        std::cerr << "[ERROR] cublasSetStream failed: " << status << std::endl;
+        cublasDestroy(_cublas_handle);
+        cudaStreamDestroy(_stream);
+        throw std::runtime_error("Failed to set cuBLAS stream");
+    }
+
+    _initialized = true;
 }
 
-// Get cuDNN handle
-extern "C" cudnnHandle_t llaisysNvidiaGetCudnnHandle() {
-    return g_nvidia_resource.cudnn_handle;
+void Resource::cleanup() {
+    if (!_initialized) {
+        return;
+    }
+
+    if (_cublas_handle != nullptr) {
+        cublasDestroy(_cublas_handle);
+        _cublas_handle = nullptr;
+    }
+
+    if (_stream != nullptr) {
+        cudaStreamDestroy(_stream);
+        _stream = nullptr;
+    }
+
+    _initialized = false;
 }
 
-// Get CUDA stream
-extern "C" cudaStream_t llaisysNvidiaGetStream() {
-    return g_nvidia_resource.stream;
+// Global resource map
+static std::unordered_map<int, Resource *> g_resources;
+
+Resource &getResource(int device_id) {
+    auto it = g_resources.find(device_id);
+    if (it == g_resources.end()) {
+        Resource *res = new Resource(device_id);
+        res->init();
+        g_resources[device_id] = res;
+        return *res;
+    }
+    
+    if (!it->second->isInitialized()) {
+        it->second->init();
+    }
+    
+    return *it->second;
 }
+
+} // namespace llaisys::device::nvidia

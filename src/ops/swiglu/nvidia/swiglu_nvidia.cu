@@ -1,55 +1,56 @@
 // src/ops/swiglu/nvidia/swiglu_nvidia.cu
-// NVIDIA CUDA implementation of SwiGLU operator
-
+#include "swiglu_nvidia.cuh"
 #include <cuda_runtime.h>
-#include "llaisys/ops.h"
-#include "llaisys/tensor.h"
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
+#include <iostream>
+#include <cmath>
 
-// CUDA kernel for SwiGLU
-__global__ void swiglu_kernel(
-    const float *gate,
-    const float *up,
-    float *out,
-    size_t numel
-) {
+namespace llaisys::ops::nvidia {
+
+template <typename T>
+__global__ void swiglu_kernel(const T *gate, const T *up, T *out, size_t numel) {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < numel) {
-        float g = gate[i];
-        float u = up[i];
-        out[i] = u * g / (1.0f + expf(-g));
+        float g = static_cast<float>(gate[i]);
+        float u = static_cast<float>(up[i]);
+        // SiLU(gate) * up = gate * sigmoid(gate) * up
+        float sigmoid_g = 1.0f / (1.0f + expf(-g));
+        out[i] = static_cast<T>(g * sigmoid_g * u);
     }
 }
 
-// NVIDIA SwiGLU operator implementation
-extern "C" llaisysResult_t llaisysSwigluNvidia(
-    llaisysTensor_t out,
-    llaisysTensor_t gate,
-    llaisysTensor_t up
-) {
-    // Check input tensors
-    if (!out || !gate || !up) {
-        return LLAISYS_ERROR;
-    }
-    
-    // Check tensor properties
-    if (gate->numel != up->numel || gate->numel != out->numel) {
-        return LLAISYS_ERROR;
-    }
-    
-    // Get data pointers
-    const float *gate_data = (const float*)gate->data;
-    const float *up_data = (const float*)up->data;
-    float *out_data = (float*)out->data;
-    
-    // Calculate grid and block dimensions
-    size_t numel = gate->numel;
+void swiglu(std::byte *out, const std::byte *gate, const std::byte *up, llaisysDataType_t type, size_t numel) {
     int blockSize = 256;
     int gridSize = (numel + blockSize - 1) / blockSize;
-    
-    // Launch kernel
-    swiglu_kernel<<<gridSize, blockSize>>>(gate_data, up_data, out_data, numel);
-    
-    // Check for errors
+
+    switch (type) {
+    case LLAISYS_DTYPE_F32:
+        swiglu_kernel<float><<<gridSize, blockSize>>>(
+            (const float *)gate, (const float *)up, (float *)out, numel);
+        break;
+    case LLAISYS_DTYPE_F16:
+        swiglu_kernel<__half><<<gridSize, blockSize>>>(
+            (const __half *)gate, (const __half *)up, (__half *)out, numel);
+        break;
+    case LLAISYS_DTYPE_BF16:
+        swiglu_kernel<__nv_bfloat16><<<gridSize, blockSize>>>(
+            (const __nv_bfloat16 *)gate, (const __nv_bfloat16 *)up, (__nv_bfloat16 *)out, numel);
+        break;
+    case LLAISYS_DTYPE_F64:
+        swiglu_kernel<double><<<gridSize, blockSize>>>(
+            (const double *)gate, (const double *)up, (double *)out, numel);
+        break;
+    default:
+        std::cerr << "[ERROR] Unsupported data type for swiglu: " << type << std::endl;
+        throw std::runtime_error("Unsupported data type");
+    }
+
     cudaError_t err = cudaGetLastError();
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] CUDA kernel launch failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("CUDA kernel launch failed");
+    }
 }
+
+} // namespace llaisys::ops::nvidia

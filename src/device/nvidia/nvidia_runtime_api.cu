@@ -1,78 +1,192 @@
 // src/device/nvidia/nvidia_runtime_api.cu
-// NVIDIA CUDA Runtime API implementation
+// NVIDIA CUDA / MetaX MACA Runtime API implementation
+
+#include "../runtime_api.hpp"
 
 #include <cuda_runtime.h>
-#include "llaisys/runtime.h"
 #include <cstring>
+#include <iostream>
 
-// Memory management
-static llaisysResult_t nvidia_malloc(void **ptr, size_t size) {
-    cudaError_t err = cudaMalloc(ptr, size);
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
+namespace llaisys::device::nvidia {
+
+namespace runtime_api {
+
+int getDeviceCount() {
+    int count = 0;
+    cudaError_t err = cudaGetDeviceCount(&count);
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaGetDeviceCount failed: " << cudaGetErrorString(err) << std::endl;
+        return 0;
+    }
+    return count;
 }
 
-static llaisysResult_t nvidia_free(void *ptr) {
-    cudaError_t err = cudaFree(ptr);
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
-}
-
-// Memory copy operations
-static llaisysResult_t nvidia_memcpy_h2d(void *dst, const void *src, size_t size) {
-    cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice);
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
-}
-
-static llaisysResult_t nvidia_memcpy_d2h(void *dst, const void *src, size_t size) {
-    cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost);
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
-}
-
-static llaisysResult_t nvidia_memcpy_d2d(void *dst, const void *src, size_t size) {
-    cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyDeviceToDevice);
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
-}
-
-// Memory set
-static llaisysResult_t nvidia_memset(void *ptr, int value, size_t size) {
-    cudaError_t err = cudaMemset(ptr, value, size);
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
-}
-
-// Synchronization
-static llaisysResult_t nvidia_synchronize() {
-    cudaError_t err = cudaDeviceSynchronize();
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
-}
-
-// Device management
-static llaisysResult_t nvidia_set_device(int device_id) {
+void setDevice(int device_id) {
     cudaError_t err = cudaSetDevice(device_id);
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaSetDevice failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("Failed to set CUDA device");
+    }
 }
 
-static llaisysResult_t nvidia_get_device(int *device_id) {
-    cudaError_t err = cudaGetDevice(device_id);
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
+void deviceSynchronize() {
+    cudaError_t err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaDeviceSynchronize failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("Failed to synchronize CUDA device");
+    }
 }
 
-static llaisysResult_t nvidia_get_device_count(int *count) {
-    cudaError_t err = cudaGetDeviceCount(count);
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
+llaisysStream_t createStream() {
+    cudaStream_t stream;
+    cudaError_t err = cudaStreamCreate(&stream);
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaStreamCreate failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("Failed to create CUDA stream");
+    }
+    return (llaisysStream_t)stream;
 }
 
-// Register API
-extern "C" const LlaisysRuntimeAPI *llaisysGetNvidiaRuntimeAPI() {
-    static LlaisysRuntimeAPI api = {
-        .malloc = nvidia_malloc,
-        .free = nvidia_free,
-        .memcpy_h2d = nvidia_memcpy_h2d,
-        .memcpy_d2h = nvidia_memcpy_d2h,
-        .memcpy_d2d = nvidia_memcpy_d2d,
-        .memset = nvidia_memset,
-        .synchronize = nvidia_synchronize,
-        .set_device = nvidia_set_device,
-        .get_device = nvidia_get_device,
-        .get_device_count = nvidia_get_device_count,
-    };
-    return &api;
+void destroyStream(llaisysStream_t stream) {
+    if (stream == nullptr) {
+        return;
+    }
+    cudaError_t err = cudaStreamDestroy((cudaStream_t)stream);
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaStreamDestroy failed: " << cudaGetErrorString(err) << std::endl;
+    }
 }
+
+void streamSynchronize(llaisysStream_t stream) {
+    if (stream == nullptr) {
+        deviceSynchronize();
+        return;
+    }
+    cudaError_t err = cudaStreamSynchronize((cudaStream_t)stream);
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaStreamSynchronize failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("Failed to synchronize CUDA stream");
+    }
+}
+
+void *mallocDevice(size_t size) {
+    void *ptr = nullptr;
+    cudaError_t err = cudaMalloc(&ptr, size);
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaMalloc failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("Failed to allocate CUDA device memory");
+    }
+    return ptr;
+}
+
+void freeDevice(void *ptr) {
+    if (ptr == nullptr) {
+        return;
+    }
+    cudaError_t err = cudaFree(ptr);
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaFree failed: " << cudaGetErrorString(err) << std::endl;
+    }
+}
+
+void *mallocHost(size_t size) {
+    void *ptr = nullptr;
+    cudaError_t err = cudaMallocHost(&ptr, size);
+    if (err != cudaSuccess) {
+        // Fallback to regular malloc if pinned memory allocation fails
+        ptr = std::malloc(size);
+        if (ptr == nullptr) {
+            std::cerr << "[ERROR] mallocHost failed" << std::endl;
+            throw std::runtime_error("Failed to allocate host memory");
+        }
+    }
+    return ptr;
+}
+
+void freeHost(void *ptr) {
+    if (ptr == nullptr) {
+        return;
+    }
+    // Try to free as pinned memory first, fallback to regular free
+    cudaError_t err = cudaFreeHost(ptr);
+    if (err != cudaSuccess) {
+        std::free(ptr);
+    }
+}
+
+void memcpySync(void *dst, const void *src, size_t size, llaisysMemcpyKind_t kind) {
+    cudaMemcpyKind cuda_kind;
+    switch (kind) {
+    case LLAISYS_MEMCPY_H2H:
+        cuda_kind = cudaMemcpyHostToHost;
+        break;
+    case LLAISYS_MEMCPY_H2D:
+        cuda_kind = cudaMemcpyHostToDevice;
+        break;
+    case LLAISYS_MEMCPY_D2H:
+        cuda_kind = cudaMemcpyDeviceToHost;
+        break;
+    case LLAISYS_MEMCPY_D2D:
+        cuda_kind = cudaMemcpyDeviceToDevice;
+        break;
+    default:
+        std::cerr << "[ERROR] Unknown memcpy kind: " << kind << std::endl;
+        throw std::runtime_error("Unknown memcpy kind");
+    }
+    
+    cudaError_t err = cudaMemcpy(dst, src, size, cuda_kind);
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaMemcpy failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("Failed to copy memory");
+    }
+}
+
+void memcpyAsync(void *dst, const void *src, size_t size, llaisysMemcpyKind_t kind, llaisysStream_t stream) {
+    cudaMemcpyKind cuda_kind;
+    switch (kind) {
+    case LLAISYS_MEMCPY_H2H:
+        cuda_kind = cudaMemcpyHostToHost;
+        break;
+    case LLAISYS_MEMCPY_H2D:
+        cuda_kind = cudaMemcpyHostToDevice;
+        break;
+    case LLAISYS_MEMCPY_D2H:
+        cuda_kind = cudaMemcpyDeviceToHost;
+        break;
+    case LLAISYS_MEMCPY_D2D:
+        cuda_kind = cudaMemcpyDeviceToDevice;
+        break;
+    default:
+        std::cerr << "[ERROR] Unknown memcpy kind: " << kind << std::endl;
+        throw std::runtime_error("Unknown memcpy kind");
+    }
+    
+    cudaError_t err = cudaMemcpyAsync(dst, src, size, cuda_kind, (cudaStream_t)stream);
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] cudaMemcpyAsync failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("Failed to copy memory asynchronously");
+    }
+}
+
+static const LlaisysRuntimeAPI RUNTIME_API = {
+    &getDeviceCount,
+    &setDevice,
+    &deviceSynchronize,
+    &createStream,
+    &destroyStream,
+    &streamSynchronize,
+    &mallocDevice,
+    &freeDevice,
+    &mallocHost,
+    &freeHost,
+    &memcpySync,
+    &memcpyAsync
+};
+
+} // namespace runtime_api
+
+const LlaisysRuntimeAPI *getRuntimeAPI() {
+    return &runtime_api::RUNTIME_API;
+}
+
+} // namespace llaisys::device::nvidia

@@ -1,69 +1,132 @@
 // src/ops/linear/nvidia/linear_nvidia.cu
-// NVIDIA CUDA implementation of linear operator
-
+#include "linear_nvidia.cuh"
+#include "../../../device/nvidia/nvidia_resource.cuh"
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
 #include <cublas_v2.h>
-#include "llaisys/ops.h"
-#include "llaisys/tensor.h"
-#include "../../device/nvidia/nvidia_resource.cu"
+#include <iostream>
 
-// NVIDIA linear operator implementation using cuBLAS
-extern "C" llaisysResult_t llaisysLinearNvidia(
-    llaisysTensor_t out,
-    llaisysTensor_t in,
-    llaisysTensor_t weight,
-    llaisysTensor_t bias
-) {
-    // Check input tensors
-    if (!out || !in || !weight) {
-        return LLAISYS_ERROR;
+namespace llaisys::ops::nvidia {
+
+template <typename T>
+__global__ void bias_add_kernel(T *out, const T *bias, size_t batch, size_t out_features) {
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < batch * out_features) {
+        size_t col = i % out_features;
+        out[i] = out[i] + bias[col];
     }
-    
-    // Get dimensions
-    size_t batch_size = in->shape[0];
-    size_t in_features = in->shape[1];
-    size_t out_features = weight->shape[0];
-    
-    // Get data pointers
-    const float *in_data = (const float*)in->data;
-    const float *weight_data = (const float*)weight->data;
-    float *out_data = (float*)out->data;
-    const float *bias_data = bias ? (const float*)bias->data : nullptr;
-    
-    // Get cuBLAS handle
-    cublasHandle_t handle = llaisysNvidiaGetCublasHandle();
-    
-    // Perform matrix multiplication: out = in * weight^T
-    float alpha = 1.0f;
-    float beta = 0.0f;
-    
-    cublasStatus_t status = cublasSgemm(
-        handle,
-        CUBLAS_OP_T,  // weight is transposed
-        CUBLAS_OP_N,  // input is not transposed
-        out_features, // rows of weight^T
-        batch_size,   // columns of input
-        in_features,  // columns of weight^T / rows of input
-        &alpha,
-        weight_data, in_features,
-        in_data, in_features,
-        &beta,
-        out_data, out_features
-    );
-    
-    if (status != CUBLAS_STATUS_SUCCESS) {
-        return LLAISYS_ERROR;
-    }
-    
-    // Add bias if provided
-    if (bias_data) {
-        // TODO: Implement bias addition kernel
-        // For now, use a simple kernel
-        dim3 blockSize(256);
-        dim3 gridSize((batch_size * out_features + blockSize.x - 1) / blockSize.x);
-        
-        // bias_add_kernel<<<gridSize, blockSize>>>(out_data, bias_data, batch_size, out_features);
-    }
-    
-    return LLAISYS_SUCCESS;
 }
+
+template <>
+__global__ void bias_add_kernel<__half>(__half *out, const __half *bias, size_t batch, size_t out_features) {
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < batch * out_features) {
+        size_t col = i % out_features;
+        out[i] = __hadd(out[i], bias[col]);
+    }
+}
+
+template <>
+__global__ void bias_add_kernel<__nv_bfloat16>(__nv_bfloat16 *out, const __nv_bfloat16 *bias, size_t batch, size_t out_features) {
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < batch * out_features) {
+        size_t col = i % out_features;
+        out[i] = __hadd(out[i], bias[col]);
+    }
+}
+
+void linear(std::byte *out, const std::byte *in, const std::byte *weight, const std::byte *bias, llaisysDataType_t type, size_t batch, size_t in_features, size_t out_features) {
+    // Get cuBLAS handle from resource
+    auto &res = llaisys::device::nvidia::getResource(0);
+    cublasHandle_t handle = res.cublasHandle();
+
+    float alpha_f = 1.0f, beta_f = 0.0f;
+    double alpha_d = 1.0, beta_d = 0.0;
+    __half alpha_h = __float2half(1.0f), beta_h = __float2half(0.0f);
+    __nv_bfloat16 alpha_bf = __float2bfloat16(1.0f), beta_bf = __float2bfloat16(0.0f);
+
+    cublasStatus_t status;
+
+    // Perform matrix multiplication: out = in * weight^T
+    // cuBLAS uses column-major, so we compute: out^T = weight * in^T
+    switch (type) {
+    case LLAISYS_DTYPE_F32:
+        status = cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                            out_features, batch, in_features,
+                            &alpha_f,
+                            (const float *)weight, in_features,
+                            (const float *)in, in_features,
+                            &beta_f,
+                            (float *)out, out_features);
+        break;
+    case LLAISYS_DTYPE_F64:
+        status = cublasDgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                            out_features, batch, in_features,
+                            &alpha_d,
+                            (const double *)weight, in_features,
+                            (const double *)in, in_features,
+                            &beta_d,
+                            (double *)out, out_features);
+        break;
+    case LLAISYS_DTYPE_F16:
+        status = cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                             out_features, batch, in_features,
+                             &alpha_f,
+                             weight, CUDA_R_16F, in_features,
+                             in, CUDA_R_16F, in_features,
+                             &beta_f,
+                             out, CUDA_R_16F, out_features,
+                             CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+        break;
+    case LLAISYS_DTYPE_BF16:
+        // Use cublasGemmEx for BF16
+        status = cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                             out_features, batch, in_features,
+                             &alpha_f,
+                             weight, CUDA_R_16BF, in_features,
+                             in, CUDA_R_16BF, in_features,
+                             &beta_f,
+                             out, CUDA_R_16BF, out_features,
+                             CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+        break;
+    default:
+        std::cerr << "[ERROR] Unsupported data type for linear: " << type << std::endl;
+        throw std::runtime_error("Unsupported data type");
+    }
+
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        std::cerr << "[ERROR] cuBLAS gemm failed: " << status << std::endl;
+        throw std::runtime_error("cuBLAS gemm failed");
+    }
+
+    // Add bias if provided
+    if (bias != nullptr) {
+        size_t total = batch * out_features;
+        int blockSize = 256;
+        int gridSize = (total + blockSize - 1) / blockSize;
+
+        switch (type) {
+        case LLAISYS_DTYPE_F32:
+            bias_add_kernel<float><<<gridSize, blockSize>>>((float *)out, (const float *)bias, batch, out_features);
+            break;
+        case LLAISYS_DTYPE_F64:
+            bias_add_kernel<double><<<gridSize, blockSize>>>((double *)out, (const double *)bias, batch, out_features);
+            break;
+        case LLAISYS_DTYPE_F16:
+            bias_add_kernel<__half><<<gridSize, blockSize>>>((__half *)out, (const __half *)bias, batch, out_features);
+            break;
+        case LLAISYS_DTYPE_BF16:
+            bias_add_kernel<__nv_bfloat16><<<gridSize, blockSize>>>((__nv_bfloat16 *)out, (const __nv_bfloat16 *)bias, batch, out_features);
+            break;
+        }
+    }
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] CUDA kernel launch failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("CUDA kernel launch failed");
+    }
+}
+
+} // namespace llaisys::ops::nvidia

@@ -1,77 +1,73 @@
 // src/ops/rope/nvidia/rope_nvidia.cu
-// NVIDIA CUDA implementation of RoPE operator
-
+#include "rope_nvidia.cuh"
 #include <cuda_runtime.h>
-#include <math.h>
-#include "llaisys/ops.h"
-#include "llaisys/tensor.h"
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
+#include <iostream>
+#include <cmath>
 
-// CUDA kernel for RoPE
-__global__ void rope_kernel(
-    const float *input,
-    const int64_t *pos_ids,
-    float *output,
-    size_t seqlen,
-    size_t nhead,
-    size_t d,
-    float theta
-) {
+namespace llaisys::ops::nvidia {
+
+template <typename T>
+__global__ void rope_kernel(const T *input, const int64_t *pos_ids, T *output, size_t seqlen, size_t nhead, size_t d, float theta) {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < seqlen * nhead * d / 2) {
-        size_t seq_idx = i / (nhead * d / 2);
-        size_t head_idx = (i / (d / 2)) % nhead;
-        size_t d_idx = i % (d / 2);
+    size_t half_d = d / 2;
+    size_t total = seqlen * nhead * half_d;
+    
+    if (i < total) {
+        size_t seq_idx = i / (nhead * half_d);
+        size_t head_idx = (i / half_d) % nhead;
+        size_t d_idx = i % half_d;
         
         int64_t pos = pos_ids[seq_idx];
-        float angle = pos / powf(theta, 2.0f * d_idx / d);
+        float angle = static_cast<float>(pos) / powf(theta, 2.0f * d_idx / d);
         
         float cos_val = cosf(angle);
         float sin_val = sinf(angle);
         
         size_t a_idx = seq_idx * nhead * d + head_idx * d + d_idx;
-        size_t b_idx = seq_idx * nhead * d + head_idx * d + d_idx + d / 2;
+        size_t b_idx = seq_idx * nhead * d + head_idx * d + d_idx + half_d;
         
-        float a = input[a_idx];
-        float b = input[b_idx];
+        float a = static_cast<float>(input[a_idx]);
+        float b = static_cast<float>(input[b_idx]);
         
-        output[a_idx] = a * cos_val - b * sin_val;
-        output[b_idx] = b * cos_val + a * sin_val;
+        output[a_idx] = static_cast<T>(a * cos_val - b * sin_val);
+        output[b_idx] = static_cast<T>(b * cos_val + a * sin_val);
     }
 }
 
-// NVIDIA RoPE operator implementation
-extern "C" llaisysResult_t llaisysRopeNvidia(
-    llaisysTensor_t out,
-    llaisysTensor_t in,
-    llaisysTensor_t pos_ids,
-    float theta
-) {
-    // Check input tensors
-    if (!out || !in || !pos_ids) {
-        return LLAISYS_ERROR;
-    }
-    
-    // Get dimensions
-    size_t seqlen = in->shape[0];
-    size_t nhead = in->shape[1];
-    size_t d = in->shape[2];
-    
-    // Get data pointers
-    const float *in_data = (const float*)in->data;
-    const int64_t *pos_data = (const int64_t*)pos_ids->data;
-    float *out_data = (float*)out->data;
-    
-    // Calculate grid and block dimensions
-    size_t numel = seqlen * nhead * d / 2;
+void rope(std::byte *out, const std::byte *in, const std::byte *pos_ids, float theta, llaisysDataType_t type, size_t seqlen, size_t nhead, size_t d) {
+    size_t total = seqlen * nhead * d / 2;
     int blockSize = 256;
-    int gridSize = (numel + blockSize - 1) / blockSize;
-    
-    // Launch kernel
-    rope_kernel<<<gridSize, blockSize>>>(
-        in_data, pos_data, out_data, seqlen, nhead, d, theta
-    );
-    
-    // Check for errors
+    int gridSize = (total + blockSize - 1) / blockSize;
+
+    switch (type) {
+    case LLAISYS_DTYPE_F32:
+        rope_kernel<float><<<gridSize, blockSize>>>(
+            (const float *)in, (const int64_t *)pos_ids, (float *)out, seqlen, nhead, d, theta);
+        break;
+    case LLAISYS_DTYPE_F16:
+        rope_kernel<__half><<<gridSize, blockSize>>>(
+            (const __half *)in, (const int64_t *)pos_ids, (__half *)out, seqlen, nhead, d, theta);
+        break;
+    case LLAISYS_DTYPE_BF16:
+        rope_kernel<__nv_bfloat16><<<gridSize, blockSize>>>(
+            (const __nv_bfloat16 *)in, (const int64_t *)pos_ids, (__nv_bfloat16 *)out, seqlen, nhead, d, theta);
+        break;
+    case LLAISYS_DTYPE_F64:
+        rope_kernel<double><<<gridSize, blockSize>>>(
+            (const double *)in, (const int64_t *)pos_ids, (double *)out, seqlen, nhead, d, theta);
+        break;
+    default:
+        std::cerr << "[ERROR] Unsupported data type for rope: " << type << std::endl;
+        throw std::runtime_error("Unsupported data type");
+    }
+
     cudaError_t err = cudaGetLastError();
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] CUDA kernel launch failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("CUDA kernel launch failed");
+    }
 }
+
+} // namespace llaisys::ops::nvidia

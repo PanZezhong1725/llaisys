@@ -1,70 +1,80 @@
 // src/ops/rms_norm/nvidia/rms_norm_nvidia.cu
-// NVIDIA CUDA implementation of RMS normalization operator
-
+#include "rms_norm_nvidia.cuh"
 #include <cuda_runtime.h>
-#include "llaisys/ops.h"
-#include "llaisys/tensor.h"
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
+#include <iostream>
 
-// CUDA kernel for RMS normalization
-__global__ void rms_norm_kernel(
-    const float *input,
-    const float *weight,
-    float *output,
-    size_t batch_size,
-    size_t feature_size,
-    float eps
-) {
-    size_t batch_idx = blockIdx.x;
-    size_t feature_idx = threadIdx.x;
+namespace llaisys::ops::nvidia {
+
+template <typename T>
+__global__ void rms_norm_kernel(const T *input, const T *weight, T *output, size_t rows, size_t cols, float eps) {
+    size_t row = blockIdx.x;
+    if (row >= rows) return;
+
+    // Calculate sum of squares using shared memory reduction
+    extern __shared__ float shared_sum[];
+    size_t tid = threadIdx.x;
     
-    if (batch_idx < batch_size && feature_idx < feature_size) {
-        // Calculate sum of squares
-        float sum_sq = 0.0f;
-        for (size_t i = 0; i < feature_size; i++) {
-            float val = input[batch_idx * feature_size + i];
-            sum_sq += val * val;
+    float local_sum = 0.0f;
+    for (size_t i = tid; i < cols; i += blockDim.x) {
+        float val = static_cast<float>(input[row * cols + i]);
+        local_sum += val * val;
+    }
+    
+    shared_sum[tid] = local_sum;
+    __syncthreads();
+    
+    // Reduction
+    for (size_t s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            shared_sum[tid] += shared_sum[tid + s];
         }
-        
-        // Calculate RMS
-        float rms = sqrtf(sum_sq / feature_size + eps);
-        
-        // Normalize
-        output[batch_idx * feature_size + feature_idx] = 
-            weight[feature_idx] * input[batch_idx * feature_size + feature_idx] / rms;
+        __syncthreads();
+    }
+    
+    // Calculate RMS
+    float rms = sqrtf(shared_sum[0] / cols + eps);
+    
+    // Normalize
+    for (size_t i = tid; i < cols; i += blockDim.x) {
+        float val = static_cast<float>(input[row * cols + i]);
+        float w = static_cast<float>(weight[i]);
+        output[row * cols + i] = static_cast<T>(w * val / rms);
     }
 }
 
-// NVIDIA RMS norm operator implementation
-extern "C" llaisysResult_t llaisysRmsNormNvidia(
-    llaisysTensor_t out,
-    llaisysTensor_t in,
-    llaisysTensor_t weight,
-    float eps
-) {
-    // Check input tensors
-    if (!out || !in || !weight) {
-        return LLAISYS_ERROR;
+void rms_norm(std::byte *out, const std::byte *in, const std::byte *weight, float eps, llaisysDataType_t type, size_t rows, size_t cols) {
+    int blockSize = 256;
+    size_t shared_mem = blockSize * sizeof(float);
+
+    switch (type) {
+    case LLAISYS_DTYPE_F32:
+        rms_norm_kernel<float><<<rows, blockSize, shared_mem>>>(
+            (const float *)in, (const float *)weight, (float *)out, rows, cols, eps);
+        break;
+    case LLAISYS_DTYPE_F16:
+        rms_norm_kernel<__half><<<rows, blockSize, shared_mem>>>(
+            (const __half *)in, (const __half *)weight, (__half *)out, rows, cols, eps);
+        break;
+    case LLAISYS_DTYPE_BF16:
+        rms_norm_kernel<__nv_bfloat16><<<rows, blockSize, shared_mem>>>(
+            (const __nv_bfloat16 *)in, (const __nv_bfloat16 *)weight, (__nv_bfloat16 *)out, rows, cols, eps);
+        break;
+    case LLAISYS_DTYPE_F64:
+        rms_norm_kernel<double><<<rows, blockSize, shared_mem>>>(
+            (const double *)in, (const double *)weight, (double *)out, rows, cols, eps);
+        break;
+    default:
+        std::cerr << "[ERROR] Unsupported data type for rms_norm: " << type << std::endl;
+        throw std::runtime_error("Unsupported data type");
     }
-    
-    // Get dimensions
-    size_t batch_size = in->shape[0];
-    size_t feature_size = in->shape[1];
-    
-    // Get data pointers
-    const float *in_data = (const float*)in->data;
-    const float *weight_data = (const float*)weight->data;
-    float *out_data = (float*)out->data;
-    
-    // Calculate grid and block dimensions
-    dim3 blockSize(feature_size);
-    dim3 gridSize(batch_size);
-    
-    // Launch kernel
-    rms_norm_kernel<<<gridSize, blockSize>>>(
-        in_data, weight_data, out_data, batch_size, feature_size, eps
-    );
-    
-    // Check for errors
+
     cudaError_t err = cudaGetLastError();
-    return (err == cudaSuccess) ? LLAISYS_SUCCESS : LLAISYS_ERROR;
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] CUDA kernel launch failed: " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error("CUDA kernel launch failed");
+    }
 }
+
+} // namespace llaisys::ops::nvidia
