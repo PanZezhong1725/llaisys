@@ -306,7 +306,7 @@ class Qwen2:
             )
             
             generated.append(next_token)
-            current_tokens.append(next_token)
+            current_tokens = [next_token]
             
             # Check for end token
             if next_token == self._end_token:
