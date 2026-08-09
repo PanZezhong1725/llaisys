@@ -7,6 +7,9 @@
 #ifdef ENABLE_NVIDIA_API
 #include "nvidia/embedding_nvidia.cuh"
 #endif
+#ifdef ENABLE_COREX_API
+#include "corex/embedding_corex.cuh"
+#endif
 
 namespace llaisys::ops {
 void embedding(tensor_t out, tensor_t index, tensor_t weight) {
@@ -57,6 +60,12 @@ void embedding(tensor_t out, tensor_t index, tensor_t weight) {
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
         return nvidia::embedding(
+            out->data(), index->data(), weight->data(), index->shape()[0],
+            weight->shape()[0], weight->shape()[1], weight->elementSize());
+#endif
+#ifdef ENABLE_COREX_API
+    case LLAISYS_DEVICE_COREX:
+        return corex::embedding(
             out->data(), index->data(), weight->data(), index->shape()[0],
             weight->shape()[0], weight->shape()[1], weight->elementSize());
 #endif

@@ -7,6 +7,9 @@
 #ifdef ENABLE_NVIDIA_API
 #include "nvidia/rope_nvidia.cuh"
 #endif
+#ifdef ENABLE_COREX_API
+#include "corex/rope_corex.cuh"
+#endif
 
 namespace llaisys::ops {
 void rope(tensor_t out, tensor_t in, tensor_t pos_ids, float theta) {
@@ -52,6 +55,12 @@ void rope(tensor_t out, tensor_t in, tensor_t pos_ids, float theta) {
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
         return nvidia::rope(
+            out->data(), in->data(), pos_ids->data(), out->dtype(), theta,
+            seq_len, num_heads, head_dim);
+#endif
+#ifdef ENABLE_COREX_API
+    case LLAISYS_DEVICE_COREX:
+        return corex::rope(
             out->data(), in->data(), pos_ids->data(), out->dtype(), theta,
             seq_len, num_heads, head_dim);
 #endif

@@ -81,6 +81,12 @@ const LlaisysRuntimeAPI *getRuntimeAPI(llaisysDeviceType_t device_type) {
 #else
         return getUnsupportedRuntimeAPI();
 #endif
+    case LLAISYS_DEVICE_COREX:
+#ifdef ENABLE_COREX_API
+        return llaisys::device::corex::getRuntimeAPI();
+#else
+        return getUnsupportedRuntimeAPI();
+#endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;
         return nullptr;

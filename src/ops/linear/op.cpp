@@ -7,6 +7,9 @@
 #ifdef ENABLE_NVIDIA_API
 #include "nvidia/linear_nvidia.cuh"
 #endif
+#ifdef ENABLE_COREX_API
+#include "corex/linear_corex.cuh"
+#endif
 
 namespace llaisys::ops {
 void linear(tensor_t out, tensor_t in, tensor_t weight, tensor_t bias) {
@@ -66,6 +69,12 @@ void linear(tensor_t out, tensor_t in, tensor_t weight, tensor_t bias) {
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
         return nvidia::linear(
+            out->data(), in->data(), weight->data(), bias_data,
+            out->dtype(), m, n, k);
+#endif
+#ifdef ENABLE_COREX_API
+    case LLAISYS_DEVICE_COREX:
+        return corex::linear(
             out->data(), in->data(), weight->data(), bias_data,
             out->dtype(), m, n, k);
 #endif

@@ -17,4 +17,10 @@ namespace nvidia {
 const LlaisysRuntimeAPI *getRuntimeAPI();
 }
 #endif
+
+#ifdef ENABLE_COREX_API
+namespace corex {
+const LlaisysRuntimeAPI *getRuntimeAPI();
+}
+#endif
 } // namespace llaisys::device

@@ -7,6 +7,9 @@
 #ifdef ENABLE_NVIDIA_API
 #include "nvidia/add_nvidia.cuh"
 #endif
+#ifdef ENABLE_COREX_API
+#include "corex/add_corex.cuh"
+#endif
 
 namespace llaisys::ops {
 void add(tensor_t c, tensor_t a, tensor_t b) {
@@ -30,6 +33,11 @@ void add(tensor_t c, tensor_t a, tensor_t b) {
     case LLAISYS_DEVICE_NVIDIA:
         return nvidia::add(c->data(), a->data(), b->data(), c->dtype(),
                            c->numel());
+#endif
+#ifdef ENABLE_COREX_API
+    case LLAISYS_DEVICE_COREX:
+        return corex::add(c->data(), a->data(), b->data(), c->dtype(),
+                          c->numel());
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

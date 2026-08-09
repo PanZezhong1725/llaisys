@@ -7,6 +7,9 @@
 #ifdef ENABLE_NVIDIA_API
 #include "nvidia/self_attention_nvidia.cuh"
 #endif
+#ifdef ENABLE_COREX_API
+#include "corex/self_attention_corex.cuh"
+#endif
 
 namespace llaisys::ops {
 void self_attention(tensor_t attn_val, tensor_t q, tensor_t k, tensor_t v, float scale) {
@@ -67,6 +70,13 @@ void self_attention(tensor_t attn_val, tensor_t q, tensor_t k, tensor_t v, float
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
         return nvidia::self_attention(
+            attn_val->data(), q->data(), k->data(), v->data(),
+            attn_val->dtype(), scale, query_len, kv_len, num_heads,
+            num_kv_heads, head_dim, value_dim);
+#endif
+#ifdef ENABLE_COREX_API
+    case LLAISYS_DEVICE_COREX:
+        return corex::self_attention(
             attn_val->data(), q->data(), k->data(), v->data(),
             attn_val->dtype(), scale, query_len, kv_len, num_heads,
             num_kv_heads, head_dim, value_dim);

@@ -18,13 +18,25 @@ if has_config("nv-gpu") then
     includes("xmake/nvidia.lua")
 end
 
+-- CoreX --
+option("corex-gpu")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Whether to compile implementations for Iluvatar CoreX GPU")
+option_end()
+
+if has_config("corex-gpu") then
+    add_defines("ENABLE_COREX_API")
+    includes("xmake/corex.lua")
+end
+
 target("llaisys-utils")
     set_kind("static")
 
     set_languages("cxx17")
     set_warnings("all", "error")
     if not is_plat("windows") then
-        add_cxflags("-fPIC", "-Wno-unknown-pragmas")
+        add_cxflags("-fPIC", "-Wno-unknown-pragmas", {force = true})
     end
 
     add_files("src/utils/*.cpp")
@@ -40,11 +52,14 @@ target("llaisys-device")
     if has_config("nv-gpu") then
         add_deps("llaisys-device-nvidia")
     end
+    if has_config("corex-gpu") then
+        add_deps("llaisys-device-corex")
+    end
 
     set_languages("cxx17")
     set_warnings("all", "error")
     if not is_plat("windows") then
-        add_cxflags("-fPIC", "-Wno-unknown-pragmas")
+        add_cxflags("-fPIC", "-Wno-unknown-pragmas", {force = true})
     end
 
     add_files("src/device/*.cpp")
@@ -60,7 +75,7 @@ target("llaisys-core")
     set_languages("cxx17")
     set_warnings("all", "error")
     if not is_plat("windows") then
-        add_cxflags("-fPIC", "-Wno-unknown-pragmas")
+        add_cxflags("-fPIC", "-Wno-unknown-pragmas", {force = true})
     end
 
     add_files("src/core/*/*.cpp")
@@ -75,7 +90,7 @@ target("llaisys-tensor")
     set_languages("cxx17")
     set_warnings("all", "error")
     if not is_plat("windows") then
-        add_cxflags("-fPIC", "-Wno-unknown-pragmas")
+        add_cxflags("-fPIC", "-Wno-unknown-pragmas", {force = true})
     end
 
     add_files("src/tensor/*.cpp")
@@ -89,13 +104,16 @@ target("llaisys-ops")
     if has_config("nv-gpu") then
         add_deps("llaisys-ops-nvidia")
     end
+    if has_config("corex-gpu") then
+        add_deps("llaisys-ops-corex")
+    end
 
     set_languages("cxx17")
     set_warnings("all", "error")
     if not is_plat("windows") then
-        add_cxflags("-fPIC", "-Wno-unknown-pragmas")
+        add_cxflags("-fPIC", "-Wno-unknown-pragmas", {force = true})
     end
-    
+
     add_files("src/ops/*/*.cpp")
 
     on_install(function (target) end)
@@ -112,12 +130,16 @@ target("llaisys")
     set_languages("cxx17")
     set_warnings("all", "error")
     add_files("src/llaisys/*.cc")
-    if has_config("nv-gpu") then
+    if has_config("nv-gpu") or has_config("corex-gpu") then
         add_syslinks("cublas", "cudart")
+    end
+    if has_config("corex-gpu") then
+        add_linkdirs("/usr/local/corex/lib64")
+        add_rpathdirs("/usr/local/corex/lib64")
     end
     set_installdir(".")
 
-    
+
     after_install(function (target)
         -- copy shared library to python package
         print("Copying llaisys to python/llaisys/libllaisys/ ..")
