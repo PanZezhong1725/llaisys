@@ -336,10 +336,17 @@ class Qwen2:
         self._lib.tensorLoad(target, source_pointer)
 
 
+    def _check_token(self, token: int):
+        vocab_size = int(self._config["vocab_size"])
+
+        if token < 0 or token >= vocab_size:
+            raise RuntimeError(f"Invalid token returned by backend: {token}")
+
+
     def generate(
         self,
         inputs: Sequence[int],
-        max_new_tokens: int = None,
+        max_new_tokens: int = 128,
         top_k: int = 1,
         top_p: float = 0.8,
         temperature: float = 0.8,
@@ -361,24 +368,38 @@ class Qwen2:
         if top_k != 1:
             raise NotImplementedError("Curent LLAISYS backend only support argmax")
 
-        vocab_size = int(self._config["vocab_size"])
+        LIB_LLAISYS.llaisysQwen2ModelReset(self._model)
 
-        for step in range(max_new_tokens):
-            # 无 KV cache, 每次把 prompt + 已生成 token 全部传入
-            input_array = (c_int64 * len(tokens))(*tokens)
+        # 第一次：完整 Prompt。
+        prompt_array = (c_int64 * len(tokens))(*tokens)
+
+        next_token = int(
+            LIB_LLAISYS.llaisysQwen2ModelInfer(
+                self._model,
+                prompt_array,
+                len(tokens),
+            )
+        )
+
+        self._check_token(next_token)
+        tokens.append(next_token)
+
+        # 后续：每次只传刚生成的一个 token。
+        for _ in range(max_new_tokens - 1):
+            if tokens[-1] == self._eos_token_id:
+                break
+
+            one_token = (c_int64 * 1)(tokens[-1])
 
             next_token = int(
-                LIB_LLAISYS.llaisysQwen2ModelInfer(self._model, input_array, len(tokens))
+                LIB_LLAISYS.llaisysQwen2ModelInfer(
+                    self._model,
+                    one_token,
+                    1,
+                )
             )
 
-            logger.info("[Qwen2] step = %d, context_len = %d, next_token = %d", step, len(tokens), next_token)
-
-            if next_token < 0 or next_token >= vocab_size:
-                raise RuntimeError(f"llaisysQwen2ModelInfer failed or returned an invaild token : {next_token}")
-
+            self._check_token(next_token)
             tokens.append(next_token)
-
-            if next_token == self._eos_token_id:
-                break
 
         return tokens

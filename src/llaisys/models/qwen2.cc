@@ -26,18 +26,6 @@
 
 namespace { // 只在当前文件可见
 
-size_t qwen2DtypeSize(llaisysDataType_t dtype) {
-    switch (dtype) {
-    case LLAISYS_DTYPE_F16:
-    case LLAISYS_DTYPE_BF16:
-        return 2;
-    case LLAISYS_DTYPE_F32:
-        return 4;
-    default:
-        throw std::invalid_argument("Unsupported Qwen2 cache dtype");
-    }
-}
-
 void destroyTensor(llaisysTensor_t &tensor) {
     if (tensor != nullptr) {
         tensorDestroy(tensor);
@@ -57,37 +45,61 @@ void destroyTensorArray(
 }
 
 
-void copyTensorBytes(
-    llaisysTensor_t dst,
-    llaisysTensor_t src,
-    size_t bytes,
-    llaisysDeviceType_t device,
-    int device_id
+void copyTensor(
+    const llaisys::tensor_t &dst,
+    const llaisys::tensor_t &src
 ) {
-    if (bytes == 0) {
-        return;
-    }
-
     if (dst == nullptr || src == nullptr) {
-        throw std::invalid_argument( "copyTensorBytes received null tensor");
+        throw std::invalid_argument(
+            "copyTensor received null tensor"
+        );
     }
 
-    llaisys::core::context().setDevice(device, device_id);
+    if (dst->shape() != src->shape()) {
+        throw std::invalid_argument(
+            "copyTensor shape mismatch"
+        );
+    }
+
+    if (dst->dtype() != src->dtype()) {
+        throw std::invalid_argument(
+            "copyTensor dtype mismatch"
+        );
+    }
+
+    if (dst->deviceType() != src->deviceType() || dst->deviceId() != src->deviceId()) {
+        throw std::invalid_argument(
+            "copyTensor device mismatch"
+        );
+    }
+
+    if (!dst->isContiguous() || !src->isContiguous()) {
+        throw std::invalid_argument(
+            "copyTensor requires contiguous tensors"
+        );
+    }
+
+    const size_t bytes = src->numel() * src->elementSize();
 
     llaisysMemcpyKind_t kind;
 
-    if (device == LLAISYS_DEVICE_CPU) {
+    if (src->deviceType() == LLAISYS_DEVICE_CPU) {
         kind = LLAISYS_MEMCPY_H2H;
     } else {
         kind = LLAISYS_MEMCPY_D2D;
     }
 
-    llaisys::core::context().runtime().api()->memcpy_sync(
-        tensorGetData(dst),
-        tensorGetData(src),
-        bytes,
-        kind
-    );
+    llaisys::core::context().setDevice(src->deviceType(), src->deviceId());
+
+    llaisys::core::context()
+        .runtime()
+        .api()
+        ->memcpy_sync(
+            dst->data(),
+            src->data(),
+            bytes,
+            kind
+        );
 }
 
 
@@ -152,8 +164,9 @@ struct LlaisysQwen2Model {
     std::vector<llaisysTensor_t> mlp_up_w;
     std::vector<llaisysTensor_t> mlp_down_w;
 
-    std::vector<llaisysTensor_t> k_cache;
-    std::vector<llaisysTensor_t> v_cache;
+    // 每个 Decoder Layer 一份 K/V Cache
+    std::vector<llaisys::tensor_t> k_cache;
+    std::vector<llaisys::tensor_t> v_cache;
 
     size_t cache_len;       // 已经写入 Cache 的有效 token 数
     size_t cache_capacity;  // 当前 Cache 最多能容纳的 token 数
@@ -172,10 +185,20 @@ struct LlaisysQwen2Model {
         llaisysDataType_t dtype
     ) const;
 
+    int64_t forwardChunk(
+        const int64_t *token_ids,
+        size_t q_len
+    );
+
     int64_t prefill(
         const int64_t *token_ids,
         size_t ntoken
     );
+
+    int64_t decode(
+        const int64_t token_id
+    );
+
 
     void initWeights(); // 只创建 tenor 并绑定到 weights，权重加载是上层 python 完成的
 
@@ -239,21 +262,25 @@ llaisys::tensor_t LlaisysQwen2Model::createTemporary(
 }
 
 
-int64_t LlaisysQwen2Model::prefill(
+int64_t LlaisysQwen2Model::forwardChunk(
     const int64_t *token_ids,
-    size_t ntoken
+    size_t q_len
 ) {
     if (token_ids == nullptr) {
         throw std::invalid_argument("token_ids must not be null");
     }
 
-    if (ntoken == 0) {
-        throw std::invalid_argument("ntoken must be greater zero");
+    if (q_len == 0) {
+        throw std::invalid_argument("q_len must be greater zero");
     }
 
-    if (ntoken > meta.maxseq) {
+    const size_t past_len = cache_len;
+    if (q_len > meta.maxseq - past_len) {
         throw std::length_error("Input sequence exceeds maxseq");
     }
+
+    const size_t total_len = past_len + q_len;
+    ensureCacheCapacity(total_len);
 
     /*
      * 当前先完成 CPU 版本。
@@ -266,7 +293,7 @@ int64_t LlaisysQwen2Model::prefill(
         throw std::runtime_error("Temporary prefill implementation only supports CPU");
     }
 
-    for (size_t i = 0; i < ntoken; ++i) {
+    for (size_t i = 0; i < q_len; ++i) {
         if (token_ids[i] < 0 || static_cast<size_t>(token_ids[i]) >= meta.voc) {
             throw std::out_of_range("Input token ID is outside vocabulary");
         } 
@@ -280,22 +307,32 @@ int64_t LlaisysQwen2Model::prefill(
     }
 
     // 1. Token IDS  shapes:[seqlen]  dtype:I64
-    auto input_ids = createTemporary({ntoken}, LLAISYS_DTYPE_I64);
+    auto input_ids = createTemporary({q_len}, LLAISYS_DTYPE_I64);
     input_ids->load(token_ids);
 
-    // 2. position IDS  无 kv cache，每次都从 0 开始：[0, 1, 2, ..., ntoken - 1]
-    std::vector<int64_t> position_data(ntoken);
-    for (size_t i = 0; i < ntoken; ++i) {
-        position_data[i] = static_cast<int64_t>(i);
+    // 2. position IDS 有 kv cache，每次都从 past_len 开始：[past_len + 0, past_len + 1, ..., past_len + q_len - 1]
+    //
+    // prefill:
+    //      past_len = 0
+    //      q_len = prompt_len
+    //      position_ids = [0, 1, 2, ..., prompt_len - 1]
+    //
+    // decode:
+    //      past_len = prompt_len
+    //      q_len = 1
+    //      position_ids = [prompt_len]
+    std::vector<int64_t> position_data(q_len);
+    for (size_t i = 0; i < q_len; ++i) {
+        position_data[i] = static_cast<int64_t>(past_len + i);
     }
-    auto position_ids = createTemporary({ntoken}, LLAISYS_DTYPE_I64);
+    auto position_ids = createTemporary({q_len}, LLAISYS_DTYPE_I64);
     position_ids->load(position_data.data());
 
     // 3. Embedding
     //      input_ids: [seqlen]
     //      weight:    [vocab, hidden]
     //      hidden:    [seqlen, hidden]
-    auto hidden = createTemporary({ntoken, meta.hs},  meta.dtype);
+    auto hidden = createTemporary({q_len, meta.hs},  meta.dtype);
     llaisys::ops::embedding(
         hidden,
         input_ids,
@@ -304,7 +341,7 @@ int64_t LlaisysQwen2Model::prefill(
     std::fprintf(
         stderr,
         "[Qwen2] embedding complete: seqlen=%zu hidden=%zu\n",
-        ntoken, meta.hs
+        q_len, meta.hs
     );
 
     // 4. Decoder Layers
@@ -313,7 +350,7 @@ int64_t LlaisysQwen2Model::prefill(
         std::fprintf( stderr, "[Qwen2] layer %zu/%zu\n", layer + 1, meta.nlayer);
 
         // a. Attention RMSNorm  [seqlen, hidden]
-        auto attention_norm = createTemporary({ntoken, meta.hs},  meta.dtype);
+        auto attention_norm = createTemporary({q_len, meta.hs},  meta.dtype);
         llaisys::ops::rms_norm(
             attention_norm,
             hidden,
@@ -325,9 +362,9 @@ int64_t LlaisysQwen2Model::prefill(
         //       Q: [seqlen, nh * dh]
         //       K: [seqlen, nkvh * dh]
         //       V: [seqlen, nkvh * dh]
-        auto q_linear = createTemporary({ntoken, q_size}, meta.dtype);
-        auto k_linear = createTemporary({ntoken, kv_size}, meta.dtype);
-        auto v_linear = createTemporary({ntoken, kv_size}, meta.dtype);
+        auto q_linear = createTemporary({q_len, q_size}, meta.dtype);
+        auto k_linear = createTemporary({q_len, kv_size}, meta.dtype);
+        auto v_linear = createTemporary({q_len, kv_size}, meta.dtype);
         llaisys::ops::linear(
             q_linear,
             attention_norm,
@@ -352,33 +389,45 @@ int64_t LlaisysQwen2Model::prefill(
         //       K: [seqlen, nkvh, dh]
         //       V: [seqlen, nkvh, dh]
         // Projection 输出连续，因此可以直接 view
-        auto q = q_linear->view({ntoken, meta.nh, meta.dh});
-        auto k = k_linear->view({ntoken, meta.nkvh, meta.dh});
-        auto v = v_linear->view({ntoken, meta.nkvh, meta.dh});
+        auto q = q_linear->view({q_len, meta.nh, meta.dh});
+        auto k = k_linear->view({q_len, meta.nkvh, meta.dh});
+        auto v = v_linear->view({q_len, meta.nkvh, meta.dh});
 
         // d. ROPE 只作用于 Q 和 K
-        auto q_rope = createTemporary({ntoken, meta.nh, meta.dh}, meta.dtype);
-        auto k_rope = createTemporary({ntoken, meta.nkvh, meta.dh}, meta.dtype);
+        auto q_rope = createTemporary({q_len, meta.nh, meta.dh}, meta.dtype);
+        auto k_rope = createTemporary({q_len, meta.nkvh, meta.dh}, meta.dtype);
         llaisys::ops::rope(q_rope, q, position_ids, meta.theta);
         llaisys::ops::rope(k_rope, k, position_ids, meta.theta);
 
+        // 写入范围：
+        //      Prefill: [0, prompt_len)
+        //      Decode:  [cache_len, cache_len + 1)
+        auto k_write = k_cache[layer]->slice(0, past_len, total_len);
+        auto v_write = v_cache[layer]->slice(0, past_len, total_len);
+        copyTensor(k_write, k_rope);    // Cache 保存 RoPE 后的 K
+        copyTensor(v_write, v);         // V 不应用 RoPE
+
         // e. Causal GQA Self-Attention
-        //      无 Cache：
-        //      
-        //       q_len     = ntoken
-        //       total_len = ntoken
-        //      
-        //       Q:   [seqlen, nh, dh]
-        //       K/V: [seqlen, nkvh, dh]
+        //    有 Cache：
+        //
+        //     prefill
+        //       Q:   [prompt_len, nh, dh]
+        //       K/V: [prompt_len, nkvh, dh]
+        //     decode
+        //       Q:   [1, nh, dh]
+        //       K/V: [past_len + 1, nkvh, dh]
+        //
         //       Out: [seqlen, nh, dh]
-        auto attention_value = createTemporary({ntoken, meta.nh, meta.dh}, meta.dtype);
-        llaisys::ops::self_attention(attention_value, q_rope, k_rope, v, attention_scale);
+        auto k_total = k_cache[layer]->slice(0, 0, total_len);
+        auto v_total = v_cache[layer]->slice(0, 0, total_len);
+        auto attention_value = createTemporary({q_len, meta.nh, meta.dh}, meta.dtype);
+        llaisys::ops::self_attention(attention_value, q_rope, k_total, v_total, attention_scale);
 
         // f. 合并 heads：[seqlen, nh, dh] -> [seqlen, hidden]
-        auto attention_flat = attention_value->view({ntoken, meta.hs});
+        auto attention_flat = attention_value->view({q_len, meta.hs});
 
         // g. O Projection  o_proj 没有 bias
-        auto attention_projected = createTemporary({ntoken, meta.hs}, meta.dtype);
+        auto attention_projected = createTemporary({q_len, meta.hs}, meta.dtype);
         llaisys::ops::linear(
             attention_projected,
             attention_flat,
@@ -387,11 +436,11 @@ int64_t LlaisysQwen2Model::prefill(
         );
 
         // h. 第一个残差连接  after_attention = hidden + attention_projected
-        auto after_attention = createTemporary({ntoken, meta.hs}, meta.dtype);
+        auto after_attention = createTemporary({q_len, meta.hs}, meta.dtype);
         llaisys::ops::add(after_attention, hidden, attention_projected);
 
         // i. MLP RMSNorm
-        auto mlp_norm = createTemporary({ntoken, meta.hs}, meta.dtype);
+        auto mlp_norm = createTemporary({q_len, meta.hs}, meta.dtype);
         llaisys::ops::rms_norm(
             mlp_norm,
             after_attention,
@@ -400,8 +449,8 @@ int64_t LlaisysQwen2Model::prefill(
         );
 
         // j. Gate/Up Projections  [seqlen, hidden] -> [seqlen, intermediate]
-        auto gate = createTemporary({ntoken, meta.di}, meta.dtype);
-        auto up = createTemporary({ntoken, meta.di}, meta.dtype);
+        auto gate = createTemporary({q_len, meta.di}, meta.dtype);
+        auto up = createTemporary({q_len, meta.di}, meta.dtype);
         llaisys::ops::linear(
             gate,
             mlp_norm,
@@ -416,11 +465,11 @@ int64_t LlaisysQwen2Model::prefill(
         );
 
         // k. SwiGLU: SiLU(gate) * up
-        auto activated = createTemporary({ntoken, meta.di}, meta.dtype);
+        auto activated = createTemporary({q_len, meta.di}, meta.dtype);
         llaisys::ops::swiglu(activated, gate, up);
 
         // l. Down Projection   [seqlen, intermediate] -> [seqlen, hidden]
-        auto down = createTemporary({ntoken, meta.hs}, meta.dtype);
+        auto down = createTemporary({q_len, meta.hs}, meta.dtype);
         llaisys::ops::linear(
             down,
             activated,
@@ -429,7 +478,7 @@ int64_t LlaisysQwen2Model::prefill(
         );
 
         // m. 第二个残差连接  layer_output = after_attention  + down
-        auto layer_output = createTemporary({ntoken, meta.hs}, meta.dtype);
+        auto layer_output = createTemporary({q_len, meta.hs}, meta.dtype);
         llaisys::ops::add(layer_output, after_attention, down);
 
         // n. 当前层输出成为下一层输入
@@ -440,7 +489,7 @@ int64_t LlaisysQwen2Model::prefill(
 
 
     // 5. Final RMSNorm
-    auto final_hidden = createTemporary({ntoken, meta.hs}, meta.dtype);
+    auto final_hidden = createTemporary({q_len, meta.hs}, meta.dtype);
     llaisys::ops::rms_norm(
         final_hidden,
         hidden,
@@ -450,7 +499,7 @@ int64_t LlaisysQwen2Model::prefill(
 
     // 6. 只取最后一个 token 的 hidden state
     // [seqlen, hidden] -> [1, hidden]
-    auto last_hidden = final_hidden->slice(0,ntoken - 1,ntoken);
+    auto last_hidden = final_hidden->slice(0, q_len - 1, q_len);
     if (!last_hidden->isContiguous()) {
         throw std::runtime_error("Last hidden state is not contiguous");
     }
@@ -475,16 +524,53 @@ int64_t LlaisysQwen2Model::prefill(
         throw std::runtime_error("Argmax returned an invalid token ID");
     }
 
+    cache_len = total_len;
+
     std::fprintf(
         stderr,
-        "[Qwen2] prefill complete: seqlen=%zu next_token=%lld\n",
-        ntoken,
+        "[Qwen2] forward complete: q_len=%zu past_len=%zu total_len=%zu next_token=%lld\n",
+        q_len,
+        past_len,
+        total_len,
         static_cast<long long>(next_token)
     );
 
     std::fflush(stderr);
 
     return next_token;
+}
+
+
+int64_t LlaisysQwen2Model::prefill(
+    const int64_t *token_ids,
+    size_t ntoken
+) {
+    if (cache_len != 0) {
+        throw std::runtime_error(
+            "Prefill requires an empty KV Cache"
+        );
+    }
+
+    return forwardChunk(
+        token_ids,
+        ntoken
+    );
+}
+
+
+int64_t LlaisysQwen2Model::decode(
+    int64_t token_id
+) {
+    if (cache_len == 0) {
+        throw std::runtime_error(
+            "Decode requires a non-empty KV Cache"
+        );
+    }
+
+    return forwardChunk(
+        &token_id,
+        1
+    );
 }
 
 
@@ -646,64 +732,41 @@ void LlaisysQwen2Model::ensureCacheCapacity(
         );
     }
 
-    std::vector<llaisysTensor_t> new_k_cache(meta.nlayer, nullptr);
-    std::vector<llaisysTensor_t> new_v_cache(meta.nlayer, nullptr);
+    std::vector<llaisys::tensor_t> new_k_cache(meta.nlayer);
+    std::vector<llaisys::tensor_t> new_v_cache(meta.nlayer);
 
-    try {
-        for (size_t layer = 0; layer < meta.nlayer; ++layer) {
-            new_k_cache[layer] = createTensor({
+    
+    for (size_t layer = 0; layer < meta.nlayer; ++layer) {
+        new_k_cache[layer] = createTemporary(
+            {
                 new_capacity,
                 meta.nkvh,
                 meta.dh,
-            });
+            },
+            meta.dtype
+        );
 
-            new_v_cache[layer] = createTensor({
+        new_v_cache[layer] = createTemporary(
+            {
                 new_capacity,
                 meta.nkvh,
                 meta.dh,
-            });
-        }
+            },
+            meta.dtype
+        );
 
         // 只复制有效部分：[0, cache_len)
         // 未使用的 [cache_len, old_capacity) 无须复制
         if (cache_len > 0) {
-            const size_t elements_per_token = meta.nkvh * meta.dh;
-            const size_t bytes_per_token = elements_per_token * qwen2DtypeSize(meta.dtype);
-            const size_t valid_bytes = cache_len * bytes_per_token;
+            auto old_k = k_cache[layer]->slice(0, 0, cache_len);
+            auto old_v = v_cache[layer]->slice(0, 0, cache_len);
+            auto new_k = new_k_cache[layer]->slice(0, 0, cache_len);
+            auto new_v = new_v_cache[layer]->slice(0, 0, cache_len);
 
-            if (k_cache.size() != meta.nlayer || v_cache.size() != meta.nlayer) {
-                throw std::runtime_error("Invalid existing KV cache layer count");
-            }
-
-            for (size_t layer = 0; layer < meta.nlayer; ++layer) {
-                copyTensorBytes(
-                    new_k_cache[layer],
-                    k_cache[layer],
-                    valid_bytes,
-                    device,
-                    device_id
-                );
-
-                copyTensorBytes(
-                    new_v_cache[layer],
-                    v_cache[layer],
-                    valid_bytes,
-                    device,
-                    device_id
-                );
-            }
+            copyTensor(new_k, old_k);
+            copyTensor(new_v, old_v);
         }
-    } catch (...) {
-        // 扩容失败时，释放新 Cache，保留旧 Cache
-        destroyTensorArray(new_k_cache);
-        destroyTensorArray(new_v_cache);
-
-        throw;
     }
-
-    // 新 Cache 已成功创建并复制，才能释放旧 Cache
-    destroyTensorArray(k_cache);
-    destroyTensorArray(v_cache);
 
     k_cache = std::move(new_k_cache);
     v_cache = std::move(new_v_cache);
@@ -711,8 +774,7 @@ void LlaisysQwen2Model::ensureCacheCapacity(
     cache_capacity = new_capacity;
 
     std::printf(
-        "Qwen2 KV cache resized: "
-        "capacity=%zu, valid_length=%zu\n",
+        "Qwen2 KV cache resized: capacity=%zu, valid_length=%zu\n",
         cache_capacity,
         cache_len
     );
@@ -741,9 +803,6 @@ void LlaisysQwen2Model::destroy() {
     destroyTensorArray(mlp_gate_w);
     destroyTensorArray(mlp_up_w);
     destroyTensorArray(mlp_down_w);
-
-    destroyTensorArray(k_cache);
-    destroyTensorArray(v_cache);
 
     weights = {};
 
@@ -829,15 +888,20 @@ int64_t llaisysQwen2ModelInfer(
     try {
         return model->prefill(token_ids, ntoken);
     } catch (const std::exception &error) {
-        std::fprintf(
-            stderr,
-            "[Qwen2] inference failed: %s\n",
-            error.what()
-        );
+       if (model->cache_len == 0) {
+            return model->prefill(
+                token_ids,
+                ntoken
+            );
+        }
 
-        std::fflush(stderr);
+        if (ntoken != 1) {
+            throw std::invalid_argument(
+                "Decode requires exactly one token"
+            );
+        }
 
-        return -1;
+        return model->decode(token_ids[0]);
     } catch (...) {
         std::fprintf(
             stderr,
