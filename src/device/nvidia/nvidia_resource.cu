@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <unordered_map>
+#include <mutex>
 
 namespace llaisys::device::nvidia {
 
@@ -79,8 +80,10 @@ void Resource::cleanup() {
 
 // Global resource map
 static std::unordered_map<int, Resource *> g_resources;
+static std::mutex g_resources_mutex;
 
 Resource &getResource(int device_id) {
+    std::lock_guard<std::mutex> lock(g_resources_mutex);
     auto it = g_resources.find(device_id);
     if (it == g_resources.end()) {
         Resource *res = new Resource(device_id);
@@ -95,5 +98,6 @@ Resource &getResource(int device_id) {
     
     return *it->second;
 }
+
 
 } // namespace llaisys::device::nvidia

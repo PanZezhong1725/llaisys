@@ -8,8 +8,16 @@
 #include <cuda_bf16.h>
 #include <iostream>
 #include <cfloat>
+#include <stdexcept>
 
 namespace llaisys::ops::nvidia {
+
+static void cuda_check(cudaError_t err, const char *what) {
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] " << what << ": " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error(what);
+    }
+}
 
 template <typename T>
 __global__ void argmax_kernel(const T *data, size_t n, int64_t *max_idx, T *max_val) {
@@ -21,8 +29,8 @@ __global__ void argmax_kernel(const T *data, size_t n, int64_t *max_idx, T *max_
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     
     // Initialize shared memory
-    shared_val[tid] = (i < n) ? data[i] : T(-FLT_MAX);
-    shared_idx[tid] = i;
+    shared_val[tid] = (i < n) ? data[i] : T(-INFINITY);
+    shared_idx[tid] = (i < n) ? i : 0;
     __syncthreads();
     
     // Reduction to find maximum
@@ -53,7 +61,7 @@ __global__ void argmax_reduce_kernel(const int64_t *block_idx, const T *block_va
     size_t tid = threadIdx.x;
 
     // Grid-stride over block results so num_blocks > blockDim.x works
-    float best = -FLT_MAX;
+    float best = -INFINITY;
     int64_t best_idx = 0;
     for (size_t i = tid; i < num_blocks; i += blockDim.x) {
         float v = static_cast<float>(block_val[i]);
@@ -91,7 +99,7 @@ void argmax(std::byte *max_idx, std::byte *max_val, const std::byte *vals, llais
     // Allocate temporary storage for block results
     int64_t *temp_idx;
     void *temp_val;
-    cudaMalloc(&temp_idx, gridSize * sizeof(int64_t));
+    cuda_check(cudaMalloc(&temp_idx, gridSize * sizeof(int64_t)), "cudaMalloc temp_idx");
     
     size_t val_size;
     switch (type) {
@@ -112,7 +120,7 @@ void argmax(std::byte *max_idx, std::byte *max_val, const std::byte *vals, llais
         throw std::runtime_error("Unsupported data type");
     }
     
-    cudaMalloc(&temp_val, gridSize * val_size);
+    cuda_check(cudaMalloc(&temp_val, gridSize * val_size), "cudaMalloc temp_val");
     
     size_t shared_mem_size = blockSize * (val_size + sizeof(int64_t));
     
@@ -137,9 +145,10 @@ void argmax(std::byte *max_idx, std::byte *max_val, const std::byte *vals, llais
     }
     
     // If only one block, copy result directly
+    cuda_check(cudaGetLastError(), "argmax first stage");
     if (gridSize == 1) {
-        cudaMemcpy(max_idx, temp_idx, sizeof(int64_t), cudaMemcpyDeviceToDevice);
-        cudaMemcpy(max_val, temp_val, val_size, cudaMemcpyDeviceToDevice);
+        cuda_check(cudaMemcpy(max_idx, temp_idx, sizeof(int64_t), cudaMemcpyDeviceToDevice), "cudaMemcpy max_idx");
+        cuda_check(cudaMemcpy(max_val, temp_val, val_size, cudaMemcpyDeviceToDevice), "cudaMemcpy max_val");
     } else {
         // Launch second stage reduction
         int reduce_blockSize = 256;
@@ -167,8 +176,9 @@ void argmax(std::byte *max_idx, std::byte *max_val, const std::byte *vals, llais
     }
     
     // Free temporary storage
-    cudaFree(temp_idx);
-    cudaFree(temp_val);
+    cuda_check(cudaGetLastError(), "argmax reduce stage");
+    cuda_check(cudaFree(temp_idx), "cudaFree temp_idx");
+    cuda_check(cudaFree(temp_val), "cudaFree temp_val");
     
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {

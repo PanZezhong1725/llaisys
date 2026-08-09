@@ -5,8 +5,16 @@
 #include <cuda_bf16.h>
 #include <iostream>
 #include <cmath>
+#include <stdexcept>
 
 namespace llaisys::ops::nvidia {
+
+static void cuda_check(cudaError_t err, const char *what) {
+    if (err != cudaSuccess) {
+        std::cerr << "[ERROR] " << what << ": " << cudaGetErrorString(err) << std::endl;
+        throw std::runtime_error(what);
+    }
+}
 
 // Causal softmax kernel
 template <typename T>
@@ -111,7 +119,7 @@ void self_attention(std::byte *attn_val, const std::byte *q, const std::byte *k,
         throw std::runtime_error("Unsupported data type");
     }
     
-    cudaMalloc(&scores, scores_size * element_size);
+    cuda_check(cudaMalloc(&scores, scores_size * element_size), "cudaMalloc scores");
     
     int blockSize = 256;
     
@@ -187,7 +195,8 @@ void self_attention(std::byte *attn_val, const std::byte *q, const std::byte *k,
     }
     
     // Free temporary storage
-    cudaFree(scores);
+    cuda_check(cudaGetLastError(), "self_attention kernels");
+    cuda_check(cudaFree(scores), "cudaFree scores");
     
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {

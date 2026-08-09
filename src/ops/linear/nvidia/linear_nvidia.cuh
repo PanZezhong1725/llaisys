@@ -4,5 +4,5 @@
 #include <cstddef>
 
 namespace llaisys::ops::nvidia {
-void linear(std::byte *out, const std::byte *in, const std::byte *weight, const std::byte *bias, llaisysDataType_t type, size_t batch, size_t in_features, size_t out_features);
+void linear(std::byte *out, const std::byte *in, const std::byte *weight, const std::byte *bias, llaisysDataType_t type, size_t batch, size_t in_features, size_t out_features, int device_id);
 }

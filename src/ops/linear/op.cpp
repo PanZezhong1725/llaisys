@@ -42,7 +42,7 @@ void linear(tensor_t out, tensor_t in, tensor_t weight, tensor_t bias) {
         return cpu::linear(out->data(), in->data(), weight->data(), bias ? bias->data() : nullptr, out->dtype(), batch, in_features, out_features);
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
-        return nvidia::linear(out->data(), in->data(), weight->data(), bias ? bias->data() : nullptr, out->dtype(), batch, in_features, out_features);
+        return nvidia::linear(out->data(), in->data(), weight->data(), bias ? bias->data() : nullptr, out->dtype(), batch, in_features, out_features, out->deviceId());
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

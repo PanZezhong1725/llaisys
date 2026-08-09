@@ -36,15 +36,13 @@ __global__ void bias_add_kernel<__nv_bfloat16>(__nv_bfloat16 *out, const __nv_bf
     }
 }
 
-void linear(std::byte *out, const std::byte *in, const std::byte *weight, const std::byte *bias, llaisysDataType_t type, size_t batch, size_t in_features, size_t out_features) {
+void linear(std::byte *out, const std::byte *in, const std::byte *weight, const std::byte *bias, llaisysDataType_t type, size_t batch, size_t in_features, size_t out_features, int device_id) {
     // Get cuBLAS handle from resource
-    auto &res = llaisys::device::nvidia::getResource(0);
+    auto &res = llaisys::device::nvidia::getResource(device_id);
     cublasHandle_t handle = res.cublasHandle();
 
     float alpha_f = 1.0f, beta_f = 0.0f;
     double alpha_d = 1.0, beta_d = 0.0;
-    __half alpha_h = __float2half(1.0f), beta_h = __float2half(0.0f);
-    __nv_bfloat16 alpha_bf = __float2bfloat16(1.0f), beta_bf = __float2bfloat16(0.0f);
 
     cublasStatus_t status;
 
