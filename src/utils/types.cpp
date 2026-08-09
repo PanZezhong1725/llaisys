@@ -39,28 +39,56 @@ float _f16_to_f32(fp16_t val) {
 
 fp16_t _f32_to_f16(float val) {
     uint32_t f32;
-    memcpy(&f32, &val, sizeof(f32));               // Read the bits of the float32
-    uint16_t sign = (f32 >> 16) & 0x8000;          // Extract the sign bit
-    int32_t exponent = ((f32 >> 23) & 0xFF) - 127; // Extract and de-bias the exponent
-    uint32_t mantissa = f32 & 0x7FFFFF;            // Extract the mantissa (fraction part)
+    memcpy(&f32, &val, sizeof(f32));
 
-    if (exponent >= 16) { // Special cases for Inf and NaN
-        // NaN
-        if (exponent == 128 && mantissa != 0) {
+    const uint16_t sign = static_cast<uint16_t>((f32 >> 16) & 0x8000);
+    const uint32_t exponent = (f32 >> 23) & 0xFF;
+    uint32_t mantissa = f32 & 0x7FFFFF;
+
+    if (exponent == 0xFF) {
+        if (mantissa != 0) {
             return fp16_t{static_cast<uint16_t>(sign | 0x7E00)};
         }
-        // Infinity
         return fp16_t{static_cast<uint16_t>(sign | 0x7C00)};
-    } else if (exponent >= -14) { // Normalized case
-        return fp16_t{(uint16_t)(sign | ((exponent + 15) << 10) | (mantissa >> 13))};
-    } else if (exponent >= -24) {
-        mantissa |= 0x800000; // Add implicit leading 1
-        mantissa >>= (-14 - exponent);
-        return fp16_t{(uint16_t)(sign | (mantissa >> 13))};
-    } else {
-        // Too small for subnormal: return signed zero
-        return fp16_t{(uint16_t)sign};
     }
+
+    int32_t half_exponent = static_cast<int32_t>(exponent) - 127 + 15;
+    if (half_exponent >= 31) {
+        return fp16_t{static_cast<uint16_t>(sign | 0x7C00)};
+    }
+
+    if (half_exponent <= 0) {
+        if (half_exponent < -10) {
+            return fp16_t{sign};
+        }
+
+        mantissa |= 0x800000;
+        const uint32_t shift = static_cast<uint32_t>(14 - half_exponent);
+        uint32_t half_mantissa = mantissa >> shift;
+        const uint32_t remainder = mantissa & ((uint32_t(1) << shift) - 1);
+        const uint32_t halfway = uint32_t(1) << (shift - 1);
+        if (remainder > halfway || (remainder == halfway && (half_mantissa & 1))) {
+            ++half_mantissa;
+        }
+
+        return fp16_t{static_cast<uint16_t>(sign | half_mantissa)};
+    }
+
+    uint32_t half_mantissa = mantissa >> 13;
+    const uint32_t remainder = mantissa & 0x1FFF;
+    if (remainder > 0x1000 || (remainder == 0x1000 && (half_mantissa & 1))) {
+        ++half_mantissa;
+        if (half_mantissa == 0x400) {
+            half_mantissa = 0;
+            ++half_exponent;
+            if (half_exponent >= 31) {
+                return fp16_t{static_cast<uint16_t>(sign | 0x7C00)};
+            }
+        }
+    }
+
+    return fp16_t{static_cast<uint16_t>(
+        sign | (static_cast<uint16_t>(half_exponent) << 10) | half_mantissa)};
 }
 
 float _bf16_to_f32(bf16_t val) {
