@@ -43,7 +43,12 @@ void self_attention_(
                            * llaisys::utils::cast<float>(k[k_index]);
                 }
 
-                scores[key_pos] = dot * scale;
+                // Match the two low-precision PyTorch stages: matmul first,
+                // followed by the scalar multiplication.
+                const T dot_value = llaisys::utils::cast<T>(dot);
+                const T scaled_value = llaisys::utils::cast<T>(
+                    llaisys::utils::cast<float>(dot_value) * scale);
+                scores[key_pos] = llaisys::utils::cast<float>(scaled_value);
                 max_score = std::max(max_score, scores[key_pos]);
             }
 
@@ -53,6 +58,11 @@ void self_attention_(
                 exponential_sum += scores[key_pos];
             }
             const float inverse_sum = 1.0f / exponential_sum;
+            for (size_t key_pos = 0; key_pos < allowed_key_count; ++key_pos) {
+                const T probability = llaisys::utils::cast<T>(
+                    scores[key_pos] * inverse_sum);
+                scores[key_pos] = llaisys::utils::cast<float>(probability);
+            }
 
             for (size_t value_column = 0; value_column < value_dim; ++value_column) {
                 float result = 0.0f;
@@ -60,7 +70,7 @@ void self_attention_(
                 for (size_t key_pos = 0; key_pos < allowed_key_count; ++key_pos) {
                     const size_t v_index =
                         (key_pos * num_kv_heads + kv_head) * value_dim + value_column;
-                    result += scores[key_pos] * inverse_sum
+                    result += scores[key_pos]
                               * llaisys::utils::cast<float>(v[v_index]);
                 }
 

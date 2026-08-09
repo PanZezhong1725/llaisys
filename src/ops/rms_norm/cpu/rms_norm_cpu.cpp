@@ -18,23 +18,18 @@ void rms_norm_(
         for (size_t column = 0; column < hidden_size; ++column) {
             const size_t index = row * hidden_size + column;
             const float value = llaisys::utils::cast<float>(in[index]);
-            const T squared = llaisys::utils::cast<T>(value * value);
-            square_sum += llaisys::utils::cast<float>(squared);
+            square_sum += value * value;
         }
 
-        const T mean_square = llaisys::utils::cast<T>(
-            square_sum / static_cast<float>(hidden_size));
-        const T mean_with_eps = llaisys::utils::cast<T>(
-            llaisys::utils::cast<float>(mean_square) + eps);
-        const T inverse_rms = llaisys::utils::cast<T>(
-            1.0f / std::sqrt(llaisys::utils::cast<float>(mean_with_eps)));
+        const float inverse_rms = 1.0f / std::sqrt(
+            square_sum / static_cast<float>(hidden_size) + eps);
 
         for (size_t column = 0; column < hidden_size; ++column) {
             const size_t index = row * hidden_size + column;
             const float value = llaisys::utils::cast<float>(in[index]);
             const float scale = llaisys::utils::cast<float>(weight[column]);
             const T normalized = llaisys::utils::cast<T>(
-                value * llaisys::utils::cast<float>(inverse_rms));
+                value * inverse_rms);
             out[index] = llaisys::utils::cast<T>(
                 llaisys::utils::cast<float>(normalized) * scale);
         }

@@ -9,8 +9,10 @@ void swiglu_(T *out, const T *gate, const T *up, size_t numel) {
     for (size_t i = 0; i < numel; ++i) {
         const float gate_value = llaisys::utils::cast<float>(gate[i]);
         const float up_value = llaisys::utils::cast<float>(up[i]);
-        const float silu = gate_value / (1.0f + std::exp(-gate_value));
-        out[i] = llaisys::utils::cast<T>(up_value * silu);
+        const T silu = llaisys::utils::cast<T>(
+            gate_value / (1.0f + std::exp(-gate_value)));
+        out[i] = llaisys::utils::cast<T>(
+            up_value * llaisys::utils::cast<float>(silu));
     }
 }
 

@@ -29,8 +29,8 @@ void rope_(
 
         for (size_t pair = 0; pair < half_dim; ++pair) {
             const float angle = position / frequency_denominators[pair];
-            const float sine = std::sin(angle);
-            const float cosine = std::cos(angle);
+            const T sine = llaisys::utils::cast<T>(std::sin(angle));
+            const T cosine = llaisys::utils::cast<T>(std::cos(angle));
 
             for (size_t head = 0; head < num_heads; ++head) {
                 const size_t base = (seq * num_heads + head) * head_dim;
@@ -38,9 +38,20 @@ void rope_(
                 const size_t second = base + half_dim + pair;
                 const float a = llaisys::utils::cast<float>(in[first]);
                 const float b = llaisys::utils::cast<float>(in[second]);
-
-                out[first] = llaisys::utils::cast<T>(a * cosine - b * sine);
-                out[second] = llaisys::utils::cast<T>(b * cosine + a * sine);
+                const T a_cos = llaisys::utils::cast<T>(
+                    a * llaisys::utils::cast<float>(cosine));
+                const T b_sin = llaisys::utils::cast<T>(
+                    b * llaisys::utils::cast<float>(sine));
+                const T b_cos = llaisys::utils::cast<T>(
+                    b * llaisys::utils::cast<float>(cosine));
+                const T a_sin = llaisys::utils::cast<T>(
+                    a * llaisys::utils::cast<float>(sine));
+                out[first] = llaisys::utils::cast<T>(
+                    llaisys::utils::cast<float>(a_cos)
+                    - llaisys::utils::cast<float>(b_sin));
+                out[second] = llaisys::utils::cast<T>(
+                    llaisys::utils::cast<float>(b_cos)
+                    + llaisys::utils::cast<float>(a_sin));
             }
         }
     }
