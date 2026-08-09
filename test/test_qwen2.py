@@ -64,7 +64,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default="cpu", choices=["cpu", "nvidia"])
+    parser.add_argument(
+        "--device", default="cpu", choices=["cpu", "nvidia", "corex"]
+    )
     args = parser.parse_args()
 
     print(f"Testing Qwen2 inference on {args.device}")
