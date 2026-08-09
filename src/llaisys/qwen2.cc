@@ -199,8 +199,9 @@ LlaisysQwen2Model *llaisysQwen2ModelCreate(
     int ndevice) try {
     CHECK_ARGUMENT(meta != nullptr, "Qwen2: metadata cannot be null.");
     CHECK_ARGUMENT(ndevice == 1, "Qwen2: exactly one device is currently supported.");
-    CHECK_ARGUMENT(device == LLAISYS_DEVICE_CPU,
-                   "Qwen2: only CPU inference is currently supported.");
+    CHECK_ARGUMENT(device == LLAISYS_DEVICE_CPU
+                       || device == LLAISYS_DEVICE_NVIDIA,
+                   "Qwen2: unsupported inference device.");
     validate_meta(*meta);
 
     auto *model = new LlaisysQwen2Model();

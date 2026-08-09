@@ -4,11 +4,12 @@ import torch
 from transformers import Qwen2Config, Qwen2ForCausalLM
 
 import llaisys
+from test_utils import llaisys_device, torch_device
 
 
 def reference_generate(model, inputs, max_new_tokens, eos_token_id):
     tokens = list(inputs)
-    current = torch.tensor([tokens], dtype=torch.int64)
+    current = torch.tensor([tokens], dtype=torch.int64, device=model.device)
     cache = None
     with torch.no_grad():
         for _ in range(max_new_tokens):
@@ -18,11 +19,13 @@ def reference_generate(model, inputs, max_new_tokens, eos_token_id):
             tokens.append(next_token)
             if next_token == eos_token_id:
                 break
-            current = torch.tensor([[next_token]], dtype=torch.int64)
+            current = torch.tensor(
+                [[next_token]], dtype=torch.int64, device=model.device
+            )
     return tokens
 
 
-def test_qwen2(dtype, tie_word_embeddings=False):
+def test_qwen2(dtype, tie_word_embeddings=False, device_name="cpu"):
     torch.manual_seed(0)
     config = Qwen2Config(
         vocab_size=32,
@@ -39,7 +42,7 @@ def test_qwen2(dtype, tie_word_embeddings=False):
         pad_token_id=0,
         tie_word_embeddings=tie_word_embeddings,
     )
-    model = Qwen2ForCausalLM(config).eval().to(dtype)
+    model = Qwen2ForCausalLM(config).eval().to(dtype).to(torch_device(device_name))
     inputs = [1, 5, 7, 9]
     max_new_tokens = 5
 
@@ -48,7 +51,9 @@ def test_qwen2(dtype, tie_word_embeddings=False):
         expected = reference_generate(
             model, inputs, max_new_tokens, config.eos_token_id
         )
-        llaisys_model = llaisys.models.Qwen2(model_path)
+        llaisys_model = llaisys.models.Qwen2(
+            model_path, llaisys_device(device_name)
+        )
         actual = llaisys_model.generate(inputs, max_new_tokens=max_new_tokens)
         assert actual == expected, f"LLAISYS: {actual}\nPyTorch: {expected}"
         repeated = llaisys_model.generate(inputs, max_new_tokens=max_new_tokens)
@@ -56,7 +61,13 @@ def test_qwen2(dtype, tie_word_embeddings=False):
 
 
 if __name__ == "__main__":
-    print("Testing Qwen2 inference on CPU")
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--device", default="cpu", choices=["cpu", "nvidia"])
+    args = parser.parse_args()
+
+    print(f"Testing Qwen2 inference on {args.device}")
     cases = (
         (torch.float32, False),
         (torch.bfloat16, False),
@@ -64,5 +75,5 @@ if __name__ == "__main__":
     )
     for dtype, tied in cases:
         print(f"   dtype <{dtype}> tied embeddings <{tied}>")
-        test_qwen2(dtype, tied)
+        test_qwen2(dtype, tied, args.device)
     print("\033[92mTest passed!\033[0m\n")
