@@ -9,7 +9,6 @@ from types import TracebackType
 from typing import Any, Mapping, Sequence
 
 import numpy as np
-import ml_dtypes # NumPy 本身目前没有原生注册 bfloat16
 import safetensors
 
 from ..libllaisys import LIB_LLAISYS, DataType, DeviceType
@@ -253,6 +252,9 @@ class Qwen2:
         model_path: Path,
     ) -> None:
         """从模型目录加载所有 safetensors 权重分片"""
+        # 注册 NumPy 的 bfloat16 dtype
+        import ml_dtypes  # noqa: F401
+
         if self._weights is None:
             raise RuntimeError("Model weights are not initialized")
 
