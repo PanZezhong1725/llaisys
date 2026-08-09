@@ -196,7 +196,7 @@ LlaisysQwen2Model *llaisysQwen2ModelCreate(
     const LlaisysQwen2Meta *meta,
     llaisysDeviceType_t device,
     int *device_ids,
-    int ndevice) {
+    int ndevice) try {
     CHECK_ARGUMENT(meta != nullptr, "Qwen2: metadata cannot be null.");
     CHECK_ARGUMENT(ndevice == 1, "Qwen2: exactly one device is currently supported.");
     CHECK_ARGUMENT(device == LLAISYS_DEVICE_CPU,
@@ -213,9 +213,11 @@ LlaisysQwen2Model *llaisysQwen2ModelCreate(
         allocate_weights(model);
     } catch (...) {
         delete model;
-        throw;
+        return nullptr;
     }
     return model;
+} catch (...) {
+    return nullptr;
 }
 
 void llaisysQwen2ModelDestroy(LlaisysQwen2Model *model) {
@@ -223,19 +225,19 @@ void llaisysQwen2ModelDestroy(LlaisysQwen2Model *model) {
 }
 
 LlaisysQwen2Weights *llaisysQwen2ModelWeights(LlaisysQwen2Model *model) {
-    CHECK_ARGUMENT(model != nullptr, "Qwen2: model cannot be null.");
-    return &model->weights;
+    return model == nullptr ? nullptr : &model->weights;
 }
 
 void llaisysQwen2ModelReset(LlaisysQwen2Model *model) {
-    CHECK_ARGUMENT(model != nullptr, "Qwen2: model cannot be null.");
-    model->past_length = 0;
+    if (model != nullptr) {
+        model->past_length = 0;
+    }
 }
 
 int64_t llaisysQwen2ModelInfer(
     LlaisysQwen2Model *model,
     const int64_t *token_ids,
-    size_t ntoken) {
+    size_t ntoken) try {
     CHECK_ARGUMENT(model != nullptr, "Qwen2: model cannot be null.");
     CHECK_ARGUMENT(token_ids != nullptr, "Qwen2: token IDs cannot be null.");
     CHECK_ARGUMENT(ntoken > 0, "Qwen2: at least one input token is required.");
@@ -355,5 +357,7 @@ int64_t llaisysQwen2ModelInfer(
         &next_token, max_index->data(), sizeof(next_token), LLAISYS_MEMCPY_D2H);
     model->past_length += ntoken;
     return next_token;
+} catch (...) {
+    return -1;
 }
 }

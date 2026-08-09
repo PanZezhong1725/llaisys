@@ -294,6 +294,8 @@ class Qwen2:
                 self._model, prompt, len(tokens)
             )
         )
+        if next_token < 0:
+            raise RuntimeError("Qwen2 inference failed")
         tokens.append(next_token)
 
         for _ in range(max_new_tokens - 1):
@@ -305,5 +307,7 @@ class Qwen2:
                     self._model, ctypes.byref(current), 1
                 )
             )
+            if next_token < 0:
+                raise RuntimeError("Qwen2 inference failed")
             tokens.append(next_token)
         return tokens
