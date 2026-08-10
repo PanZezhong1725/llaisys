@@ -15,13 +15,13 @@
         }                                                                        \
     } while (0)
 
-// V1：手写的两轮 kernel。cuDNN 的 cudnnReduceTensor 试过一版（能一次给出 value+index），
-// 但那是 cuDNN 已弃用的 legacy ops API，且 Graph API 没有对应的带 index 输出的归约节点，
-// 加上 BF16 会报 CUDNN_STATUS_NOT_SUPPORTED，所以退回这版手写实现。
+// 两轮 kernel（手写，cuDNN 的归约节点没有能一次给出 value+index 的非弃用 API，见 CLAUDE.md）：
+// 第一轮多 block 各自规约出局部候选，第二轮单 block 对候选再规约一次得到全局结果，
+// idx_map 非空时把"候选缓冲区里的位置"翻译回原始下标。
 template <typename T>
 __global__ void argmax_kernel(int64_t *block_idx, T *block_val, const T *vals, size_t numel, const int64_t *idx_map) {
 
-    // Step 1. 线程局部扫描（thread-local scan）
+    // 线程局部扫描
     T best_val = -INFINITY;;
     int64_t best_idx;
     size_t tid = threadIdx.x;
@@ -37,7 +37,7 @@ __global__ void argmax_kernel(int64_t *block_idx, T *block_val, const T *vals, s
             }
         }
     }
-    // Step 2. 块内规约（block-level reduction）
+    // 块内规约
     extern __shared__ unsigned char shared_mem[];
     T *shared_val = reinterpret_cast<T *>(shared_mem);
     int64_t *shared_idx = reinterpret_cast<int64_t *>(shared_val + blockDim.x);
@@ -57,11 +57,10 @@ __global__ void argmax_kernel(int64_t *block_idx, T *block_val, const T *vals, s
 
     if (tid == 0) {
         block_idx[blockIdx.x] = shared_idx[0];
-        block_val[blockIdx.x] = shared_val[0]; // 每个 block 写出一个局部和
+        block_val[blockIdx.x] = shared_val[0];
     }
 }
 
-// 2. Launcher：负责 grid、block 和 kernel 启动
 template <typename T>
 void launch_argmax(int64_t *max_idx, T *max_val, const T *vals, size_t numel) {
     constexpr int block_size = 256;

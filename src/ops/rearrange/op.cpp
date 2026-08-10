@@ -7,10 +7,7 @@ namespace llaisys::ops {
 void rearrange(tensor_t out, tensor_t in) {
     CHECK_SAME_DEVICE(out, in);
 
-    // TODO: rearrange 特有的校验(dtype/shape 等)
-
-    // TODO: 设计 cpu kernel 接口后,#include "cpu/rearrange_cpu.hpp" 并把下面的 TO_BE_IMPLEMENTED() 换成实际调用
-
+    // 弃用：永久 stub，不会实现（KV cache 拷贝等场景改用 memcpy，见 CLAUDE.md）。
     if (out->deviceType() == LLAISYS_DEVICE_CPU) {
         TO_BE_IMPLEMENTED();
         return;

@@ -5,14 +5,8 @@
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
-// 手写的两遍 softmax kernel（GQA-aware，一个 block 处理一个 (query token i, head h)）。
-// 之前有一版用 cuDNN 的 cudnn_frontend SDPA Graph API 做 head 维度是 8 的倍数时的加速路径，
-// 但每次调用都要重新 build graph（decode 阶段 total_len 每步都变，缓存不了），实测是解码阶段
-// 的主要瓶颈；而缓存方案又要在 causal mask 下正确处理 padding，还牵扯到 cuDNN 版本兼容性问题
-// （9.24.0 在 sm_120 上 SDPA 运行时崩溃）和 Iluvatar 平台完全没有 Graph API 的问题。综合评估后
-// 认为 cuDNN 加速这条路对这个项目现阶段不合适，已经去掉，统一用这版手写 kernel。
-// 一个 block 处理一个 (query token i, head h)；scores 用动态 shared memory 存一整行
-// （total_len 个 float），大小由 launcher 按 total_len*sizeof(float) 申请。
+// 通用兜底 kernel（任意 shape/causal_offset）：一个 block 处理一个 (query token i, head h)，
+// 三遍扫描（打分+max / softmax 归一 / 加权求和 v），scores 用动态 shared memory 存一整行。
 template <typename T>
 __global__ void self_attention_kernel(T *attn_val, const T *q, const T *k, const T *v,
                                       size_t seqlen, size_t total_len, size_t nhead, size_t nkvhead,
@@ -30,7 +24,6 @@ __global__ void self_attention_kernel(T *attn_val, const T *q, const T *k, const
     __shared__ float sdata[256];
     // 第一遍打分：每个线程按 grid-stride 负责一部分 j（j = tid, tid+stride, ... <= limit）。
     float max_score = -INFINITY;
-    // 遍历每一个key token
     for (size_t j = tid; j <= limit; j += blockDim.x) {
         float score = 0.0f;
 
@@ -79,7 +72,6 @@ __global__ void self_attention_kernel(T *attn_val, const T *q, const T *k, const
     }
 }
 
-// Launcher：负责 grid、block 和 kernel 启动
 template <typename T>
 void launch_self_attention(T *attn_val, const T *q, const T *k, const T *v,
                            size_t seqlen, size_t total_len, size_t nhead, size_t nkvhead,

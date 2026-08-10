@@ -27,16 +27,14 @@ class Qwen2:
                 nkvh=config["num_key_value_heads"],
                 dh=config["hidden_size"] // config["num_attention_heads"],
                 di=config["intermediate_size"],
-                maxseq=2048,  # 你自己设的上限，比如 2048，别用 config 里的 max_position_embeddings
+                maxseq=2048,  # 上限，别用 config 里的 max_position_embeddings（太大，内存装不下）
                 voc=config["vocab_size"],
                 epsilon=config["rms_norm_eps"],
                 theta=config["rope_theta"],
-                # 先写死
                 end_token=config["eos_token_id"],
             )
 
-        # 写死
-        device_ids = (ctypes.c_int * 1)(0)
+        device_ids = (ctypes.c_int * 1)(0)  # 单卡
         self.model = LIB_LLAISYS.llaisysQwen2ModelCreate(
             ctypes.byref(self.meta), device.value, device_ids, 1
         )
@@ -44,21 +42,16 @@ class Qwen2:
 
         w = self.weights.contents
 
-        # TODO: fill in the full mapping (see docs discussion / inspect_safetensors_keys.py
-        # for the real key strings). key = full safetensors name (no "model.layers.{i}." prefix
-        # and no layer index) -> attribute name on `w`.
+        # 完整 safetensors 名 -> w 上的属性名
         GLOBAL_MAP = {
             "model.embed_tokens.weight": "in_embed",
             "lm_head.weight": "out_embed",
             "model.norm.weight": "out_norm_w",
         }
 
-        # key = safetensors name with the "model.layers.{i}." prefix stripped
-        # -> attribute name on `w` (this attribute is an array, indexed by layer below).
+        # 去掉 "model.layers.{i}." 前缀后的 key -> w 上的属性名（数组，按 layer 索引）
         LAYER_MAP = {
-            # Attention 前的 RMSNorm
             "input_layernorm.weight": "attn_norm_w",
-            # Self-Attention
             "self_attn.q_proj.weight": "attn_q_w",
             "self_attn.q_proj.bias": "attn_q_b",
             "self_attn.k_proj.weight": "attn_k_w",
@@ -78,13 +71,11 @@ class Qwen2:
             data_ = safetensors.safe_open(file, framework="numpy", device="cpu")
             for name_ in data_.keys():
                 arr = data_.get_tensor(name_)
-                # TODO: sanity-check arr.dtype / contiguity against what the C++ side
-                # allocated as meta.dtype (BF16) before trusting a raw memcpy.
+                # TODO: 加载前没校验 arr.dtype/contiguity 是否匹配 C++ 侧分配的 meta.dtype，
+                # 目前是直接信任这次真实权重跑通了的 raw memcpy。
                 ptr = arr.ctypes.data_as(ctypes.c_void_p)
 
                 if name_.startswith("model.layers."):
-                    # TODO: parse out layer_idx and the remaining key, e.g. via
-                    # name_.partition("model.layers.") / .partition(".")
                     _ ,_, remain = name_.partition("model.layers.")
                     layer_idx,_,key = remain.partition(".")
                     layer_idx = int(layer_idx)
@@ -105,34 +96,27 @@ class Qwen2:
         temperature: float = 0.8,
         step_context=None,
     ):
-        #1校验输入正确xing
         if max_new_tokens is None:
             max_new_tokens = 1024
         if len(inputs) == 0:
             raise ValueError("inputs cannot be empty")
         generated_tokens = list(inputs)
 
-        #2/3 prefill 和生成循环合并成一个循环：
-        # 第一轮 current_input 是整个 prompt（相当于 prefill），
-        # 之后每轮 current_input 只是上一步新生成的那一个 token（decode）
+        # prefill/decode 共用一个循环：第一轮 current_input 是整个 prompt（prefill），
+        # 之后每轮只喂上一步生成的那个 token（decode）。
         current_input = generated_tokens
         for step in range(max_new_tokens):
             token_array = (ctypes.c_int64 * len(current_input))(*current_input)
-            # step_context lets a caller (e.g. a benchmark script) wrap each Infer
-            # call to time/label prefill vs decode steps without generate() itself
-            # depending on any profiling library.
+            # 让调用方（如 benchmark 脚本）包一层 context 分别计时 prefill/decode，
+            # 而不需要 generate() 本身依赖任何 profiling 库。
             ctx = step_context(step, step == 0) if step_context else contextlib.nullcontext()
             with ctx:
                 next_token = LIB_LLAISYS.llaisysQwen2ModelInfer(
                     self.model, token_array, len(current_input)
                 )
             generated_tokens.append(next_token)
-            # 判断 next_token 是否等于 self.meta.end_token，是的话 break
             if next_token == self.meta.end_token:
                 break
             current_input = [next_token]
-
-        #4 返回结构
-        # TODO: 返回新生成的 token（不包含原始 inputs 部分）
 
         return generated_tokens

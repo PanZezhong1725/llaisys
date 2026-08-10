@@ -4,16 +4,13 @@
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 
-// V1：手写 kernel。cuDNN Graph API 的 RoPE 节点（9.24+ 才有）探索过一版，但只支持
-// f16/bf16（不支持 f32，官方文档：https://docs.nvidia.com/deeplearning/cudnn/latest/operations/RoPE.html），
-// 需要 f32 时 fallback 回这版 + 额外算一个 FREQS 角度张量，先放一放，退回这版手写实现。
-// 1. Kernel：只负责 GPU 上的具体计算
+// 手写 kernel（cuDNN RoPE Graph 节点只支持 f16/bf16 不支持 f32，探索后放弃，见 CLAUDE.md）。
 template <typename T>
 __global__ void rope_kernel(T *out, const T *in, const int64_t *pos_ids, float theta,
                              size_t nhead, size_t d) {
-    size_t i = blockIdx.x;  // token 位置, [0, seqlen)
-    size_t h = blockIdx.y;  // head 编号, [0, nhead)
-    size_t tid = threadIdx.x; // 线程编号, [0, blockDim.x)
+    size_t i = blockIdx.x;  // token 位置
+    size_t h = blockIdx.y;  // head 编号
+    size_t tid = threadIdx.x;
     size_t base = i * nhead * d + h * d;
     size_t stride = blockDim.x;
     for(size_t j = tid; j< d/2;j+=stride){
@@ -27,7 +24,6 @@ __global__ void rope_kernel(T *out, const T *in, const int64_t *pos_ids, float t
     }
 }
 
-// 2. Launcher：负责 grid、block 和 kernel 启动
 template <typename T>
 void launch_rope(T *out, const T *in, const int64_t *pos_ids, float theta,
                   size_t seqlen, size_t nhead, size_t d) {
@@ -37,7 +33,6 @@ void launch_rope(T *out, const T *in, const int64_t *pos_ids, float theta,
     rope_kernel<<<grid, block_size>>>(out, in, pos_ids, theta, nhead, d);
 }
 
-// 3. 对外接口：负责 std::byte 转换和 dtype 分发
 namespace llaisys::ops::iluvatar {
 
 void rope(std::byte *out, const std::byte *in, const std::byte *pos_ids,

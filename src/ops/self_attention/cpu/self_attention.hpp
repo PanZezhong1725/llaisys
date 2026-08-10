@@ -4,9 +4,7 @@
 
 #include <cstddef>
 
-// V3(在 V2 基础上加了 GQA,不做 softmax 数值稳定处理):
-// nhead 必须是 nkvhead 的整数倍,group = nhead / nkvhead 个相邻 query head 共享同一个 kv head:
-// kvh(h) = h / group。
+// GQA: nhead 必须是 nkvhead 的整数倍,kvh(h) = h / (nhead/nkvhead)。
 // causal: query 位置 i 只能看到 key 位置 j <= i + (total_len - seqlen)。
 //
 // attn_val : [seqlen,    nhead,   dv]

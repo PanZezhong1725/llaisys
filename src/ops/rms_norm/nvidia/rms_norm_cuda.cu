@@ -4,9 +4,7 @@
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
-// 1. Kernel：只负责 GPU 上的具体计算
-// 输入向量的行数，例如 token 数量
-// d 每一行的特征维度，例如 hidden_size
+// rows: token 数；d: hidden_size。一个 block 处理一行，先规约出 sum-of-squares 再归一化。
 template <typename T>
 __global__ void rms_norm_kernel(T *out, const T *in, const T *weight, float eps, size_t rows, size_t d) {
     size_t row = blockIdx.x;
@@ -37,7 +35,6 @@ __global__ void rms_norm_kernel(T *out, const T *in, const T *weight, float eps,
     return;
 }
 
-// 2. Launcher：负责 grid、block 和 kernel 启动
 template <typename T>
 void launch_rms_norm(T *out, const T *in, const T *weight, float eps, size_t rows, size_t d) {
     constexpr int block_size = 256;
@@ -46,7 +43,6 @@ void launch_rms_norm(T *out, const T *in, const T *weight, float eps, size_t row
     rms_norm_kernel<<<grid_size, block_size,shared_bytes>>>(out, in, weight,eps,rows,d);
 }
 
-// 3. 对外接口：负责 std::byte 转换和 dtype 分发
 namespace llaisys::ops::cuda {
 
 void rms_norm(std::byte *out, const std::byte *in, const std::byte *weight,

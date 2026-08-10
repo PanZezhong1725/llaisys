@@ -5,55 +5,7 @@
 #include <cuda_runtime.h>
 #include "../../../device/iluvatar/iluvatar_resource.cuh"
 #define CEIL(a, b) (((a) + (b) - 1) / (b))
-/* 练手用的 tiled-GEMM 手写 kernel，现在 F32/BF16/F16 都已经改用 cublas 计算，
-   下面这段暂时不再被调用，留着当参考。
-constexpr int TILE_SIZE = 16;
-// 1. Kernel：只负责 GPU 上的具体计算
-template <typename T>
-__global__ void linear_kernel(T *out, const T *in, const T *weight, const T *bias,
-                              size_t M, size_t N, size_t K) {
-    // 获取当前的 要计算的 out row 与 col
-    __shared__ T ins[TILE_SIZE][TILE_SIZE];
-    __shared__ T weights[TILE_SIZE][TILE_SIZE];
-
-    size_t row = blockIdx.y * blockDim.y + threadIdx.y;
-    size_t col = blockIdx.x * blockDim.x + threadIdx.x;
-
-    size_t numTiles =  CEIL(K, TILE_SIZE);
-    float sum = 0.0;
-    for(int t = 0;t<numTiles; t++){
-        int offset = t*TILE_SIZE;
-        //load in
-        int localcol = offset + threadIdx.x;
-        if (row < M && localcol < K){
-            ins[threadIdx.y][threadIdx.x] = in[row * K + localcol ];
-        }else{
-            ins[threadIdx.y][threadIdx.x] = 0;
-        }
-        //load weight
-        int localrow = offset + threadIdx.y;
-        if (localrow < K && col < N){
-            weights[threadIdx.y][threadIdx.x] = weight[col*K + localrow];
-        }else{
-            weights[threadIdx.y][threadIdx.x] = 0;
-        }
-        __syncthreads();
-
-        for (int k = 0; k < TILE_SIZE; k++) {
-            sum += (float)(ins[threadIdx.y][k] ) * (float)(weights[k][threadIdx.x]);
-        }
-        __syncthreads();
-    }
-
-    if (row < M && col < N) {
-        out[row * N + col] = sum;
-        // 加上bias
-        if (bias != nullptr) {
-            out[row * N+ col] += bias[col];
-        }
-    }
-}
-*/
+// F32/BF16/F16 都走 cublas；原来练手写的 tiled-GEMM kernel 见 git 历史。
 
 template <typename T>
 __global__ void add_bias_kernel(T *out, const T *bias, size_t M, size_t N) {
@@ -62,23 +14,7 @@ __global__ void add_bias_kernel(T *out, const T *bias, size_t M, size_t N) {
 }
 
 
-/* 同样是练手用的 launcher，配合上面注释掉的 linear_kernel，现在没人调用了。
-// 2. Launcher：负责 grid、block 和 kernel 启动
-// in : [M, K], weight : [N, K], bias : [N], out : [M, N]
-// M: in 的行数，N: weight 的行数，也就是输出列数，K: 公共维度
-// out = in * weight^T + bias
-template <typename T>
-void launch_linear(T *out, const T *in, const T *weight, const T *bias,
-                   size_t M, size_t N, size_t K) {
-
-    dim3 block_size(TILE_SIZE, TILE_SIZE);                  // x 对应列，y 对应行
-    dim3 grid_size(CEIL(N, TILE_SIZE), CEIL(M, TILE_SIZE)); // x 覆盖 N，y 覆盖 M
-
-    linear_kernel<<<grid_size, block_size>>>(out, in, weight, bias, M, N, K);
-}
-*/
-
-// 3. 对外接口：负责 std::byte 转换和 dtype 分发
+// in : [M, K], weight : [N, K], bias : [N], out : [M, N]；out = in * weight^T + bias
 namespace llaisys::ops::iluvatar {
 
 void linear(std::byte *out, const std::byte *in, const std::byte *weight, const std::byte *bias,
@@ -121,8 +57,7 @@ void linear(std::byte *out, const std::byte *in, const std::byte *weight, const 
     }
     case LLAISYS_DTYPE_BF16:
     {
-        // TODO(合并乘加): 和上面 F32 分支同样的思路——bias 广播进 out + beta=1.0f，
-        // 省掉下面单独的 add_bias_kernel 调用。
+        // TODO: bias 可以广播进 out + beta=1.0f 融合掉，省下面单独的 add_bias_kernel
         const float alpha = 1.0f;
         const float beta = 0.0f;
 
@@ -169,8 +104,7 @@ void linear(std::byte *out, const std::byte *in, const std::byte *weight, const 
 
     case LLAISYS_DTYPE_F16:
     {
-        // TODO(合并乘加): 和上面 F32 分支同样的思路——bias 广播进 out + beta=1.0f，
-        // 省掉下面单独的 add_bias_kernel 调用。
+        // TODO: bias 可以广播进 out + beta=1.0f 融合掉，省下面单独的 add_bias_kernel
         const float alpha = 1.0f;
         const float beta = 0.0f;
 

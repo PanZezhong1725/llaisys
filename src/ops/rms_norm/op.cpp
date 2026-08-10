@@ -4,11 +4,7 @@
 #include "../../utils.hpp"
 #include "nvidia/rms_norm_cuda.cuh"
 #include "iluvatar/rms_norm_iluvatar.cuh"
-//// RMSNorm:
-// y[i] = w[i] * x[i] / sqrt(mean(x^2) + eps)
-// where mean(x^2) = (1 / d) * sum_{j=0}^{d-1}(x[j] * x[j])
-// w[i] is the weight for the i-th element, and eps is a small constant to avoid division by zero.
-// in :[rows, d], weight :[d], out :[rows, d]
+// y[i] = w[i] * x[i] / sqrt(mean(x^2) + eps)；in/out : [rows, d], weight : [d]
 namespace llaisys::ops {
 void rms_norm(tensor_t out, tensor_t in, tensor_t weight, float eps) {
     CHECK_SAME_DEVICE(out, in, weight);

@@ -4,18 +4,10 @@
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 
-// swiglu(gate, up) = silu(gate) * up
-// silu(x) = x * sigmoid(x) = x / (1 + exp(-x))
-//
-// out/gate/up 形状都是 [rows, d]，且都保证 contiguous（op.cpp 里已断言），
-// 所以可以整体当成长度 numel = rows*d 的一维数组处理——
-// out[idx] 只依赖同一个 idx 上的 gate[idx]/up[idx]，没有跨元素依赖，
-// 也不需要任何归约/shared memory，跟 add/embedding 是同一类型的 kernel。
-//
-// 当前签名还是模板占位符的样子（单个 input + numel）：
-// swiglu 实际需要两个输入 gate、up，需要按这个改一下 kernel/launcher 的参数列表。
+// swiglu(gate, up) = silu(gate) * up，silu(x) = x/(1+exp(-x))。
+// out/gate/up 都是 [rows,d] 且 contiguous（op.cpp 已断言），按 numel=rows*d 摊平成一维处理，
+// 逐元素无跨元素依赖，不需要归约/shared memory。
 
-// 1. Kernel：只负责 GPU 上的具体计算
 template <typename T>
 __global__ void swiglu_kernel(T *out, const T *gate, const T *up, size_t numel) {
     size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -28,7 +20,6 @@ __global__ void swiglu_kernel(T *out, const T *gate, const T *up, size_t numel) 
     }
 }
 
-// 2. Launcher：负责 grid、block 和 kernel 启动
 template <typename T>
 void launch_swiglu(T *out, const T *gate, const T *up,size_t rows,size_t d) {
     constexpr int block_size = 256;
@@ -38,7 +29,6 @@ void launch_swiglu(T *out, const T *gate, const T *up,size_t rows,size_t d) {
     swiglu_kernel<<<grid_size, block_size>>>(out, gate, up, numel);
 }
 
-// 3. 对外接口：负责 std::byte 转换和 dtype 分发
 namespace llaisys::ops::cuda {
 
 void swiglu(std::byte *out, const std::byte *gate, const std::byte *up, llaisysDataType_t type, size_t rows, size_t d) {
