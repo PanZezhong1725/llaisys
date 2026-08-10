@@ -58,9 +58,11 @@ python test/ops/<op>.py --device iluvatar
 | --- | --- |
 | CPU | ✅ |
 | NVIDIA | ✅ |
-| Iluvatar | 8 个算子已通过，完整模型推理未在远程机器上验证 |
+| Iluvatar | ✅（远程机器上跑通，见下方说明） |
 
 **修复过的 bug**：`qwen2.cc` 里 `argmax` 结果 `max_idx` 在 GPU 上是设备指针，早期代码直接在主机端解引用导致段错误（只在 CPU 设备下"凑巧"能跑，因为 CPU 的显存指针和主机指针是同一地址空间）。参照 `Tensor::debug()` 的做法，改为 `memcpy_sync(..., LLAISYS_MEMCPY_D2H)` 读回主机端后再使用。修复后 32 个 token 逐个匹配 HF 参考实现。
+
+**Iluvatar 端到端验证**：去掉 cuDNN 加速（第 5.1 节）之后，这个改动此前只在 8 个算子的单测层面验证过，完整模型推理没有在天数机器上跑过。原来的远程实例中途被销毁，重新开了一台同镜像的新实例后补跑：`test/test_infer.py --device iluvatar --test`（模型权重从 HuggingFace 自动下载）8 个算子 + 完整推理全部通过，token 输出逐个匹配 HF 参考实现，确认 cuDNN 移除对 Iluvatar 没有引入回归。
 
 ## 5. 性能优化：`self_attention`
 
@@ -118,4 +120,4 @@ Decode 加速比明显小于 prefill：decode kernel 只发射 `nhead`（12）�
 | --- | --- | --- | --- |
 | CPU | ✅ | ✅ | 未作为优化目标 |
 | NVIDIA | ✅ 8/8 | ✅ | cuDNN 移除 + flash attention + split-KV，decode 相比最初的 cuDNN 版本快一个数量级以上 |
-| Iluvatar CoreX | ✅ 8/8 | 未验证 | 未测量 |
+| Iluvatar CoreX | ✅ 8/8 | ✅ | 未测量（split-KV 等 NVIDIA 侧优化未移植到这个平台） |
