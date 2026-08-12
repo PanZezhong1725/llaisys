@@ -7,12 +7,6 @@
 #if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "../nvidia/nvidia_ops.cuh"
 #endif
-#ifdef ENABLE_ILUVATAR_API
-    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
-        return nvidia::linear(out->data(), in->data(), weight->data(), bias == nullptr ? nullptr : bias->data(),
-                              out->dtype(), in->shape()[0], in->shape()[1], weight->shape()[0]);
-    }
-#endif
 
 namespace llaisys::ops {
 void linear(tensor_t out, tensor_t in, tensor_t weight, tensor_t bias) {
@@ -42,6 +36,12 @@ void linear(tensor_t out, tensor_t in, tensor_t weight, tensor_t bias) {
     llaisys::core::context().setDevice(out->deviceType(), out->deviceId());
 #ifdef ENABLE_NVIDIA_API
     if (out->deviceType() == LLAISYS_DEVICE_NVIDIA) {
+        return nvidia::linear(out->data(), in->data(), weight->data(), bias == nullptr ? nullptr : bias->data(),
+                              out->dtype(), in->shape()[0], in->shape()[1], weight->shape()[0]);
+    }
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
         return nvidia::linear(out->data(), in->data(), weight->data(), bias == nullptr ? nullptr : bias->data(),
                               out->dtype(), in->shape()[0], in->shape()[1], weight->shape()[0]);
     }

@@ -7,12 +7,6 @@
 #if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "../nvidia/nvidia_ops.cuh"
 #endif
-#ifdef ENABLE_ILUVATAR_API
-    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
-        return nvidia::embedding(out->data(), index->data(), weight->data(), weight->dtype(), index->shape()[0],
-                                 weight->shape()[0], weight->shape()[1]);
-    }
-#endif
 
 namespace llaisys::ops {
 void embedding(tensor_t out, tensor_t index, tensor_t weight) {
@@ -34,6 +28,12 @@ void embedding(tensor_t out, tensor_t index, tensor_t weight) {
     llaisys::core::context().setDevice(out->deviceType(), out->deviceId());
 #ifdef ENABLE_NVIDIA_API
     if (out->deviceType() == LLAISYS_DEVICE_NVIDIA) {
+        return nvidia::embedding(out->data(), index->data(), weight->data(), weight->dtype(), index->shape()[0],
+                                 weight->shape()[0], weight->shape()[1]);
+    }
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
         return nvidia::embedding(out->data(), index->data(), weight->data(), weight->dtype(), index->shape()[0],
                                  weight->shape()[0], weight->shape()[1]);
     }

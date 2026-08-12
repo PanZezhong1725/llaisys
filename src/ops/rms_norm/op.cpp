@@ -7,11 +7,6 @@
 #if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "../nvidia/nvidia_ops.cuh"
 #endif
-#ifdef ENABLE_ILUVATAR_API
-    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
-        return nvidia::rms_norm(out->data(), in->data(), weight->data(), in->dtype(), in->shape()[0], in->shape()[1], eps);
-    }
-#endif
 
 namespace llaisys::ops {
 void rms_norm(tensor_t out, tensor_t in, tensor_t weight, float eps) {
@@ -32,6 +27,11 @@ void rms_norm(tensor_t out, tensor_t in, tensor_t weight, float eps) {
     llaisys::core::context().setDevice(out->deviceType(), out->deviceId());
 #ifdef ENABLE_NVIDIA_API
     if (out->deviceType() == LLAISYS_DEVICE_NVIDIA) {
+        return nvidia::rms_norm(out->data(), in->data(), weight->data(), in->dtype(), in->shape()[0], in->shape()[1], eps);
+    }
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
         return nvidia::rms_norm(out->data(), in->data(), weight->data(), in->dtype(), in->shape()[0], in->shape()[1], eps);
     }
 #endif

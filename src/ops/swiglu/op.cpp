@@ -7,11 +7,6 @@
 #if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "../nvidia/nvidia_ops.cuh"
 #endif
-#ifdef ENABLE_ILUVATAR_API
-    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
-        return nvidia::swiglu(out->data(), gate->data(), up->data(), out->dtype(), out->numel());
-    }
-#endif
 
 namespace llaisys::ops {
 void swiglu(tensor_t out, tensor_t gate, tensor_t up) {
@@ -29,6 +24,11 @@ void swiglu(tensor_t out, tensor_t gate, tensor_t up) {
     llaisys::core::context().setDevice(out->deviceType(), out->deviceId());
 #ifdef ENABLE_NVIDIA_API
     if (out->deviceType() == LLAISYS_DEVICE_NVIDIA) {
+        return nvidia::swiglu(out->data(), gate->data(), up->data(), out->dtype(), out->numel());
+    }
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
         return nvidia::swiglu(out->data(), gate->data(), up->data(), out->dtype(), out->numel());
     }
 #endif

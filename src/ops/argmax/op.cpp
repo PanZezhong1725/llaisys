@@ -7,11 +7,6 @@
 #if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "../nvidia/nvidia_ops.cuh"
 #endif
-#ifdef ENABLE_ILUVATAR_API
-    if (vals->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
-        return nvidia::argmax(max_idx->data(), max_val->data(), vals->data(), vals->dtype(), vals->numel());
-    }
-#endif
 
 namespace llaisys::ops {
 void argmax(tensor_t max_idx, tensor_t max_val, tensor_t vals) {
@@ -30,6 +25,11 @@ void argmax(tensor_t max_idx, tensor_t max_val, tensor_t vals) {
     llaisys::core::context().setDevice(vals->deviceType(), vals->deviceId());
 #ifdef ENABLE_NVIDIA_API
     if (vals->deviceType() == LLAISYS_DEVICE_NVIDIA) {
+        return nvidia::argmax(max_idx->data(), max_val->data(), vals->data(), vals->dtype(), vals->numel());
+    }
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    if (vals->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
         return nvidia::argmax(max_idx->data(), max_val->data(), vals->data(), vals->dtype(), vals->numel());
     }
 #endif

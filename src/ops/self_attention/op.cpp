@@ -7,12 +7,6 @@
 #if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "../nvidia/nvidia_ops.cuh"
 #endif
-#ifdef ENABLE_ILUVATAR_API
-    if (attn_val->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
-        return nvidia::self_attention(attn_val->data(), q->data(), k->data(), v->data(), q->dtype(), query_length,
-                                      key_length, query_heads, key_value_heads, head_dim, value_dim, scale);
-    }
-#endif
 
 namespace llaisys::ops {
 void self_attention(tensor_t attn_val, tensor_t q, tensor_t k, tensor_t v, float scale) {
@@ -44,6 +38,12 @@ void self_attention(tensor_t attn_val, tensor_t q, tensor_t k, tensor_t v, float
     llaisys::core::context().setDevice(attn_val->deviceType(), attn_val->deviceId());
 #ifdef ENABLE_NVIDIA_API
     if (attn_val->deviceType() == LLAISYS_DEVICE_NVIDIA) {
+        return nvidia::self_attention(attn_val->data(), q->data(), k->data(), v->data(), q->dtype(), query_length,
+                                      key_length, query_heads, key_value_heads, head_dim, value_dim, scale);
+    }
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    if (attn_val->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
         return nvidia::self_attention(attn_val->data(), q->data(), k->data(), v->data(), q->dtype(), query_length,
                                       key_length, query_heads, key_value_heads, head_dim, value_dim, scale);
     }

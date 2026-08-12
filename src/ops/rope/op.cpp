@@ -7,12 +7,6 @@
 #if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "../nvidia/nvidia_ops.cuh"
 #endif
-#ifdef ENABLE_ILUVATAR_API
-    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
-        return nvidia::rope(out->data(), in->data(), pos_ids->data(), in->dtype(), in->shape()[0], in->shape()[1],
-                            in->shape()[2], theta);
-    }
-#endif
 
 namespace llaisys::ops {
 void rope(tensor_t out, tensor_t in, tensor_t pos_ids, float theta) {
@@ -35,6 +29,12 @@ void rope(tensor_t out, tensor_t in, tensor_t pos_ids, float theta) {
     llaisys::core::context().setDevice(out->deviceType(), out->deviceId());
 #ifdef ENABLE_NVIDIA_API
     if (out->deviceType() == LLAISYS_DEVICE_NVIDIA) {
+        return nvidia::rope(out->data(), in->data(), pos_ids->data(), in->dtype(), in->shape()[0], in->shape()[1],
+                            in->shape()[2], theta);
+    }
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
         return nvidia::rope(out->data(), in->data(), pos_ids->data(), in->dtype(), in->shape()[0], in->shape()[1],
                             in->shape()[2], theta);
     }
