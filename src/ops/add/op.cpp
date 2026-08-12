@@ -5,6 +5,10 @@
 
 #include "cpu/add_cpu.hpp"
 
+#ifdef ENABLE_NVIDIA_API
+#include "nvidia/add_nvidia.cuh"
+#endif
+
 namespace llaisys::ops {
 void add(tensor_t c, tensor_t a, tensor_t b) {
     CHECK_SAME_DEVICE(c, a, b);
@@ -28,8 +32,14 @@ void add(tensor_t c, tensor_t a, tensor_t b) {
 #ifdef ENABLE_NVIDIA_API
     // 只有 Xmake 配置启用 nv-gpu 时，才会定义 ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
-        TO_BE_IMPLEMENTED();
-        return;
+        return nvidia::add(
+            c->data(),
+            a->data(),
+            b->data(),
+            c->dtype(),
+            c->numel(),
+            llaisys::core::context().runtime().stream()
+        );
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

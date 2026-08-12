@@ -122,6 +122,65 @@ llaisys::tensor_t unwrapWeight(
     return handle->tensor;
 }
 
+
+int64_t readInt64Scalar(
+    const llaisys::tensor_t &tensor
+) {
+    if (tensor == nullptr) {
+        throw std::invalid_argument(
+            "readInt64Scalar received null tensor"
+        );
+    }
+
+    if (tensor->dtype() != LLAISYS_DTYPE_I64) {
+        throw std::invalid_argument(
+            "readInt64Scalar requires I64 tensor"
+        );
+    }
+
+    if (tensor->numel() != 1) {
+        throw std::invalid_argument(
+            "readInt64Scalar requires one element"
+        );
+    }
+
+    if (!tensor->isContiguous()) {
+        throw std::invalid_argument(
+            "readInt64Scalar requires contiguous tensor"
+        );
+    }
+
+    int64_t value = 0;
+
+    llaisys::core::context().setDevice(
+        tensor->deviceType(),
+        tensor->deviceId()
+    );
+
+    auto &runtime =
+        llaisys::core::context().runtime();
+
+    /*
+     * Argmax kernel 是异步提交到 Runtime stream 的。
+     * CPU 马上需要 next_token，因此这里就是合理的同步边界。
+     */
+    runtime.synchronize();
+
+    const llaisysMemcpyKind_t kind =
+        tensor->deviceType() == LLAISYS_DEVICE_CPU
+            ? LLAISYS_MEMCPY_H2H
+            : LLAISYS_MEMCPY_D2H;
+
+    runtime.api()->memcpy_sync(
+        &value,
+        tensor->data(),
+        sizeof(value),
+        kind
+    );
+
+    return value;
+}
+
 } // namespace
 
 
@@ -168,8 +227,8 @@ struct LlaisysQwen2Model {
     std::vector<llaisys::tensor_t> k_cache;
     std::vector<llaisys::tensor_t> v_cache;
 
-    size_t cache_len;       // 已经写入 Cache 的有效 token 数
-    size_t cache_capacity;  // 当前 Cache 最多能容纳的 token 数
+    size_t cache_len = 0;       // 已经写入 Cache 的有效 token 数
+    size_t cache_capacity = 0;  // 当前 Cache 最多能容纳的 token 数
 
     llaisysTensor_t createTensor(
         std::initializer_list<size_t> shape
@@ -282,16 +341,6 @@ int64_t LlaisysQwen2Model::forwardChunk(
     const size_t total_len = past_len + q_len;
     ensureCacheCapacity(total_len);
 
-    /*
-     * 当前先完成 CPU 版本。
-     *
-     * GPU 版本最后读取 argmax 索引时需要 D2H，
-     * 不能直接解引用设备指针。
-     */
-
-    if (device != LLAISYS_DEVICE_CPU) {
-        throw std::runtime_error("Temporary prefill implementation only supports CPU");
-    }
 
     for (size_t i = 0; i < q_len; ++i) {
         if (token_ids[i] < 0 || static_cast<size_t>(token_ids[i]) >= meta.voc) {
@@ -338,16 +387,12 @@ int64_t LlaisysQwen2Model::forwardChunk(
         input_ids,
         unwrapWeight(weights.in_embed, "model.embed_tokens.weight")
     );
-    std::fprintf(
-        stderr,
-        "[Qwen2] embedding complete: seqlen=%zu hidden=%zu\n",
-        q_len, meta.hs
-    );
+    // std::fprintf(stderr, "[Qwen2] embedding complete: seqlen=%zu hidden=%zu\n", q_len, meta.hs);
 
     // 4. Decoder Layers
-    const float attention_scale = 1.0f / std::sqrt(static_cast<float>(meta.dh));
+    const float attention_scale = 1.0f / sqrtf(static_cast<float>(meta.dh));
     for (size_t layer= 0; layer < meta.nlayer; ++layer) {
-        std::fprintf( stderr, "[Qwen2] layer %zu/%zu\n", layer + 1, meta.nlayer);
+        // std::fprintf( stderr, "[Qwen2] layer %zu/%zu\n", layer + 1, meta.nlayer);
 
         // a. Attention RMSNorm  [seqlen, hidden]
         auto attention_norm = createTemporary({q_len, meta.hs},  meta.dtype);
@@ -518,8 +563,14 @@ int64_t LlaisysQwen2Model::forwardChunk(
     auto max_value = createTemporary({1}, meta.dtype);
     llaisys::ops::argmax(max_index, max_value, logits);
 
-    const auto *index_data =reinterpret_cast<const int64_t *>(max_index->data());
-    const int64_t next_token = index_data[0];
+    // 
+    const int64_t next_token = readInt64Scalar(max_index);
+    if (next_token < 0 || static_cast<size_t>(next_token) >= meta.voc) {
+        throw std::runtime_error(
+            "Argmax returned an invalid token ID"
+        );
+    }
+
     if (next_token < 0 || static_cast<size_t>(next_token) >= meta.voc) {
         throw std::runtime_error("Argmax returned an invalid token ID");
     }
@@ -806,6 +857,9 @@ void LlaisysQwen2Model::destroy() {
 
     weights = {};
 
+    k_cache.clear();
+    v_cache.clear();
+
     cache_len = 0;
     cache_capacity = 0;
 }
@@ -886,13 +940,8 @@ int64_t llaisysQwen2ModelInfer(
     }
 
     try {
-        return model->prefill(token_ids, ntoken);
-    } catch (const std::exception &error) {
-       if (model->cache_len == 0) {
-            return model->prefill(
-                token_ids,
-                ntoken
-            );
+        if (model->cache_len == 0) {
+            return model->prefill(token_ids,ntoken);
         }
 
         if (ntoken != 1) {
@@ -902,6 +951,18 @@ int64_t llaisysQwen2ModelInfer(
         }
 
         return model->decode(token_ids[0]);
+
+    } catch (const std::exception &error) {
+        std::fprintf(
+            stderr,
+            "[Qwen2] inference failed: %s\n",
+            error.what()
+        );
+
+        std::fflush(stderr);
+
+        return -1;
+       
     } catch (...) {
         std::fprintf(
             stderr,
