@@ -4,8 +4,14 @@
 #include "../../utils.hpp"
 #include "../cpu/cpu_utils.hpp"
 #include "cpu/self_attention_cpu.hpp"
-#ifdef ENABLE_NVIDIA_API
+#if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "../nvidia/nvidia_ops.cuh"
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    if (attn_val->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
+        return nvidia::self_attention(attn_val->data(), q->data(), k->data(), v->data(), q->dtype(), query_length,
+                                      key_length, query_heads, key_value_heads, head_dim, value_dim, scale);
+    }
 #endif
 
 namespace llaisys::ops {

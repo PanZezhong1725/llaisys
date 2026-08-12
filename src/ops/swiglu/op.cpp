@@ -4,8 +4,13 @@
 #include "../../utils.hpp"
 #include "../cpu/cpu_utils.hpp"
 #include "cpu/swiglu_cpu.hpp"
-#ifdef ENABLE_NVIDIA_API
+#if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "../nvidia/nvidia_ops.cuh"
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
+        return nvidia::swiglu(out->data(), gate->data(), up->data(), out->dtype(), out->numel());
+    }
 #endif
 
 namespace llaisys::ops {

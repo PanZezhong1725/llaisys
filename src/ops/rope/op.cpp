@@ -4,8 +4,14 @@
 #include "../../utils.hpp"
 #include "../cpu/cpu_utils.hpp"
 #include "cpu/rope_cpu.hpp"
-#ifdef ENABLE_NVIDIA_API
+#if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "../nvidia/nvidia_ops.cuh"
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    if (out->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
+        return nvidia::rope(out->data(), in->data(), pos_ids->data(), in->dtype(), in->shape()[0], in->shape()[1],
+                            in->shape()[2], theta);
+    }
 #endif
 
 namespace llaisys::ops {

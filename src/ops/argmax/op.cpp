@@ -4,8 +4,13 @@
 #include "../../utils.hpp"
 #include "cpu/argmax_cpu.hpp"
 #include "../cpu/cpu_utils.hpp"
-#ifdef ENABLE_NVIDIA_API
+#if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "../nvidia/nvidia_ops.cuh"
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    if (vals->deviceType() == LLAISYS_DEVICE_ILUVATAR) {
+        return nvidia::argmax(max_idx->data(), max_val->data(), vals->data(), vals->dtype(), vals->numel());
+    }
 #endif
 
 namespace llaisys::ops {
