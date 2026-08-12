@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <vector>
 
@@ -42,7 +43,10 @@ void self_attention_impl(std::byte *attn_val,
                 scores[key_position] = score * scale;
             }
 
-            const float max_score = *std::max_element(scores.begin(),scores.end());
+            // Masked positions are outside the softmax domain and must not
+            // influence the numerically stable maximum.
+            const auto valid_scores_end = scores.begin() + static_cast<std::ptrdiff_t>(last_allowed_key + 1);
+            const float max_score = *std::max_element(scores.begin(), valid_scores_end);
             float denominator = 0.0f;
             for (size_t key_position = 0; key_position <= last_allowed_key; ++key_position) {
                 scores[key_position] = std::exp(scores[key_position] - max_score);
