@@ -12,6 +12,9 @@ from .llaisys_types import llaisysStream_t
 from .tensor import llaisysTensor_t
 from .tensor import load_tensor
 from .ops import load_ops
+from .qwen2 import load_qwen2
+
+_DLL_DIRECTORY_HANDLES = []
 
 
 def load_shared_library():
@@ -21,6 +24,11 @@ def load_shared_library():
         libname = "libllaisys.so"
     elif sys.platform == "win32":
         libname = "llaisys.dll"
+        cuda_path = os.environ.get("CUDA_PATH")
+        if cuda_path and hasattr(os, "add_dll_directory"):
+            cuda_bin = Path(cuda_path) / "bin"
+            if cuda_bin.is_dir():
+                _DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(str(cuda_bin)))
     elif sys.platform == "darwin":
         libname = "llaisys.dylib"
     else:
@@ -38,6 +46,7 @@ LIB_LLAISYS = load_shared_library()
 load_runtime(LIB_LLAISYS)
 load_tensor(LIB_LLAISYS)
 load_ops(LIB_LLAISYS)
+load_qwen2(LIB_LLAISYS)
 
 
 __all__ = [

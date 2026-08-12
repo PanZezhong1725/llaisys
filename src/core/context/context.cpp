@@ -4,7 +4,7 @@
 
 namespace llaisys::core {
 
-Context::Context() {
+Context::Context() : _current_runtime(nullptr) {
     // All device types, put CPU at the end
     std::vector<llaisysDeviceType_t> device_typs;
     for (int i = 1; i < LLAISYS_DEVICE_TYPE_COUNT; i++) {
@@ -52,7 +52,7 @@ Context::~Context() {
 void Context::setDevice(llaisysDeviceType_t device_type, int device_id) {
     // If doest not match the current runtime.
     if (_current_runtime == nullptr || _current_runtime->deviceType() != device_type || _current_runtime->deviceId() != device_id) {
-        auto runtimes = _runtime_map[device_type];
+        auto &runtimes = _runtime_map[device_type];
         CHECK_ARGUMENT((size_t)device_id < runtimes.size() && device_id >= 0, "invalid device id");
         if (_current_runtime != nullptr) {
             _current_runtime->_deactivate();
@@ -70,10 +70,19 @@ Runtime &Context::runtime() {
     return *_current_runtime;
 }
 
+namespace {
+// Keep the context alive for the process lifetime on Windows. A thread-local
+// smart pointer may run its destructor after the DLL has started unloading,
+// making CUDA cleanup unsafe.
+thread_local Context *thread_context = nullptr;
+}
+
 // Global API to get thread-local context.
 Context &context() {
-    thread_local Context thread_context;
-    return thread_context;
+    if (!thread_context) {
+        thread_context = new Context();
+    }
+    return *thread_context;
 }
 
 } // namespace llaisys::core
