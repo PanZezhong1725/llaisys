@@ -361,6 +361,31 @@ python test/test_infer.py --model [dir_path/to/model] --test --device nvidia
 
 提交并推送你的更改。你应该看到作业#4的自动测试通过了。
 
+### 天数智芯 CoreX 环境复现
+
+天数智芯平台使用独立的 `iluvatar-gpu` 构建选项。CoreX 4.4.0 的 CUDA
+兼容编译器是 Clang Iluvatar 后端，目标架构为 `ivcore11`，不能使用 NVIDIA
+的 `compute_xx` 参数。
+
+```bash
+export COREX_HOME=/usr/local/corex
+export PATH=$COREX_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$COREX_HOME/lib64:${LD_LIBRARY_PATH:-}
+export XMAKE_ROOT=y  # 仅 root 容器需要
+
+xmake f --iluvatar-gpu=y -cv
+xmake
+xmake install
+pip install ./python/
+
+ixsmi
+python test/test_runtime.py --device iluvatar
+python test/ops/add.py --device iluvatar
+```
+
+验证环境：Iluvatar BI-V150（32 GiB），CoreX SDK/Driver 4.4.0。Python 接口
+使用独立的 `iluvatar` 设备名称，与 NVIDIA 后端明确区分。
+
 ## 作业提交要求
 
 将作业代码以 Pull Request 的形式提交到 [wooway777/llaisys-26s](https://github.com/wooway777/llaisys-26s)。

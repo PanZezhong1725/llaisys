@@ -1,0 +1,94 @@
+#include "argmax_nvidia.hpp"
+
+#include "../../../utils.hpp"
+#include "../../../utils/cuda_check.hpp"
+
+#include <cfloat>
+#include <cstdint>
+
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
+
+// 每个 block 的线程数，与下方 __shared__ 数组大小、以及 host 端启动配置保持一致
+constexpr int THREAD_NUM = 256;
+
+template <typename T>
+__global__ void argmax_kernel(const T *vals, T *max_val, std::int64_t *max_idx, size_t n) {
+    // 每个线程的局部最大值和下标
+    float local_val = -FLT_MAX;
+    size_t local_idx = 0;
+
+    // 每个线程扫自己负责的子集，求局部最大
+    // grid-stride 扫描，步长为 blockDim.x，保证每个线程扫到不同的元素
+    for (size_t i = threadIdx.x; i < n; i += blockDim.x) {
+        float v = static_cast<float>(vals[i]);   
+        if (v > local_val) {                     
+            local_val = v;
+            local_idx = i;
+        }
+    }
+
+    // 树形归约，把 256 个局部最大合并成 1 个
+    __shared__ float s_val[THREAD_NUM];       // block 内共享：存各线程的局部最大值
+    __shared__ std::size_t s_idx[THREAD_NUM]; // 存对应的下标
+    s_val[threadIdx.x] = local_val;
+    s_idx[threadIdx.x] = local_idx;
+    __syncthreads();              
+
+    for (int stride = THREAD_NUM / 2; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {               // 只有前一半线程参与本轮合并
+            float a = s_val[threadIdx.x];
+            float b = s_val[threadIdx.x + stride];
+            if (b > a || (b == a && s_idx[threadIdx.x + stride] < s_idx[threadIdx.x])) {
+                s_val[threadIdx.x] = b;
+                s_idx[threadIdx.x] = s_idx[threadIdx.x + stride];
+            }
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        max_val[0] = static_cast<T>(s_val[0]);
+        max_idx[0] = static_cast<std::int64_t>(s_idx[0]);
+    }
+}
+
+
+namespace llaisys::ops::nvidia {
+void argmax(tensor_t max_idx, tensor_t max_val, tensor_t vals, llaisysDataType_t type, size_t numel) {
+    if (numel == 0) {
+        return;
+    }
+
+    switch (type) {
+    case LLAISYS_DTYPE_F32:
+        argmax_kernel<float><<<1, THREAD_NUM>>>(
+            reinterpret_cast<const float *>(vals->data()),
+            reinterpret_cast<float *>(max_val->data()),
+            reinterpret_cast<std::int64_t *>(max_idx->data()),
+            numel);
+        break;
+    case LLAISYS_DTYPE_F16:
+        argmax_kernel<__half><<<1, THREAD_NUM>>>(
+            reinterpret_cast<const __half *>(vals->data()),
+            reinterpret_cast<__half *>(max_val->data()),
+            reinterpret_cast<std::int64_t *>(max_idx->data()),
+            numel);
+        break;
+    case LLAISYS_DTYPE_BF16:
+        argmax_kernel<__nv_bfloat16><<<1, THREAD_NUM>>>(
+            reinterpret_cast<const __nv_bfloat16 *>(vals->data()),
+            reinterpret_cast<__nv_bfloat16 *>(max_val->data()),
+            reinterpret_cast<std::int64_t *>(max_idx->data()),
+            numel);
+        break;
+    default:
+        EXCEPTION_UNSUPPORTED_DATATYPE(type);
+    }
+
+    // 检查启动错误 + 等 GPU 算完
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaDeviceSynchronize());
+}
+
+} // namespace llaisys::ops::nvidia
