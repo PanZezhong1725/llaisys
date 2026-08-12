@@ -114,7 +114,7 @@ target("llaisys-ops")
         add_cxflags("-fPIC", "-Wno-unknown-pragmas")
     end
     
-    add_files("src/ops/*/*.cpp")
+    add_files("src/ops/*/*.cpp|iluvatar/*.cpp")
 
     on_install(function (target) end)
 target_end()
