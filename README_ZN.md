@@ -363,6 +363,8 @@ python test/test_infer.py --model [dir_path/to/model] --test --device nvidia
 
 提交并推送你的更改。你应该看到作业#4的自动测试通过了。
 
+本仓库的 NVIDIA、天数智芯 CoreX 与沐曦 MXMACA 后端结构、构建方式和复现命令见 [`ASSIGNMENT4_ZN.md`](ASSIGNMENT4_ZN.md)。
+
 ## 作业提交要求
 
 将作业代码以 Pull Request 的形式提交到 [wooway777/llaisys-26s](https://github.com/wooway777/llaisys-26s)。

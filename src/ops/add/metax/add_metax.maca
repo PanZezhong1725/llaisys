@@ -1,0 +1,80 @@
+#include "add_metax.hpp"
+
+#include "../../../device/metax/metax_dtype.hpp"
+#include "../../../device/metax/metax_utils.hpp"
+
+#include <mc_runtime.h>
+
+#include <stdexcept>
+
+namespace llaisys::ops::metax {
+
+namespace {
+
+using llaisys::device::metax::bf16_t;
+using llaisys::device::metax::fp16_t;
+using llaisys::device::metax::from_float;
+using llaisys::device::metax::to_float;
+
+template <typename T>
+__global__ void add_kernel(T *out, const T *a, const T *b, size_t numel) {
+    const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < numel) {
+        out[i] = from_float<T>(to_float(a[i]) + to_float(b[i]));
+    }
+}
+
+template <typename T>
+void launch(
+    std::byte *out,
+    const std::byte *a,
+    const std::byte *b,
+    size_t numel,
+    int grid_size,
+    int block_size,
+    mcStream_t stream
+) {
+    add_kernel<T><<<grid_size, block_size, 0, stream>>>(
+        reinterpret_cast<T *>(out),
+        reinterpret_cast<const T *>(a),
+        reinterpret_cast<const T *>(b),
+        numel
+    );
+}
+
+} // namespace
+
+void add(
+    std::byte *out,
+    const std::byte *a,
+    const std::byte *b,
+    llaisysDataType_t dtype,
+    size_t numel,
+    llaisysStream_t stream_
+) {
+    if (numel == 0) {
+        return;
+    }
+
+    constexpr int BLOCK_SIZE = 256;
+    const int grid_size = static_cast<int>((numel + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    const mcStream_t stream = reinterpret_cast<mcStream_t>(stream_);
+
+    switch (dtype) {
+    case LLAISYS_DTYPE_F32:
+        launch<float>(out, a, b, numel, grid_size, BLOCK_SIZE, stream);
+        break;
+    case LLAISYS_DTYPE_F16:
+        launch<fp16_t>(out, a, b, numel, grid_size, BLOCK_SIZE, stream);
+        break;
+    case LLAISYS_DTYPE_BF16:
+        launch<bf16_t>(out, a, b, numel, grid_size, BLOCK_SIZE, stream);
+        break;
+    default:
+        throw std::runtime_error("Unsupported datatype in MetaX add");
+    }
+
+    METAX_KERNEL_CHECK();
+}
+
+} // namespace llaisys::ops::metax
