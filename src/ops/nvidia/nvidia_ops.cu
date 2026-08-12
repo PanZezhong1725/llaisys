@@ -108,11 +108,10 @@ __global__ void rope_kernel(T *out, const T *in, const int64_t *positions,
         const size_t head = (i / half) % heads;
         const size_t pair = i % half;
         const size_t base = (token * heads + head) * dim;
-        const double angle = static_cast<double>(positions[token])
-                             * pow(static_cast<double>(theta),
-                                   -2.0 * static_cast<double>(pair) / static_cast<double>(dim));
-        const float c = static_cast<float>(cos(angle));
-        const float s = static_cast<float>(sin(angle));
+        const float exponent = 2.0F * static_cast<float>(pair) / static_cast<float>(dim);
+        const float angle = static_cast<float>(positions[token]) / powf(theta, exponent);
+        const float c = cosf(angle);
+        const float s = sinf(angle);
         const float a = as_float(in[base + pair]);
         const float b = as_float(in[base + half + pair]);
         out[base + pair] = from_float<T>(a * c - b * s);
