@@ -1,7 +1,9 @@
 from typing import Sequence
 import ctypes
+import gc
 import json
 import mmap
+import sys
 import struct
 from ctypes import c_int, c_int64, c_size_t
 from pathlib import Path
@@ -11,9 +13,24 @@ from ..libllaisys import LIB_LLAISYS, DeviceType, DataType
 from ..libllaisys.qwen2 import LlaisysQwen2Meta
 
 
+def _trim_windows_working_set():
+    """Release freed PyTorch pages before allocating the native model weights."""
+    if sys.platform != "win32":
+        return
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.SetProcessWorkingSetSize.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t]
+    kernel32.SetProcessWorkingSetSize.restype = ctypes.c_int
+    current_process = kernel32.GetCurrentProcess()
+    trim = ctypes.c_size_t(-1).value
+    kernel32.SetProcessWorkingSetSize(current_process, trim, trim)
+
+
 class Qwen2:
 
     def __init__(self, model_path, device: DeviceType = DeviceType.CPU):
+        gc.collect()
+        _trim_windows_working_set()
         model_path = Path(model_path)
         with (model_path / "config.json").open("r", encoding="utf-8") as config_file:
             config = json.load(config_file)
