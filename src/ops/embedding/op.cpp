@@ -7,6 +7,9 @@
 #ifdef ENABLE_NVIDIA_API
 #include "nvidia/embedding_nvidia.hpp"
 #endif
+#ifdef ENABLE_SUDA_API
+#include "suda/embedding_suda.hpp"
+#endif
 
 namespace llaisys::ops {
 void embedding(tensor_t out, tensor_t index, tensor_t weight) {
@@ -33,6 +36,11 @@ void embedding(tensor_t out, tensor_t index, tensor_t weight) {
     case LLAISYS_DEVICE_NVIDIA:
         return nvidia::embedding(out->data(), index->data(), weight->data(),
                                  out->dtype(), seq_len, embed_dim, vocab_size);
+#endif
+#ifdef ENABLE_SUDA_API
+    case LLAISYS_DEVICE_SUDA:
+        return suda::embedding(out->data(), reinterpret_cast<const int64_t *>(index->data()),
+                               weight->data(), out->dtype(), seq_len, embed_dim);
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

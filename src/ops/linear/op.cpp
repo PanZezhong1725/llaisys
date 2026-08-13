@@ -7,6 +7,9 @@
 #ifdef ENABLE_NVIDIA_API
 #include "nvidia/linear_nvidia.hpp"
 #endif
+#ifdef ENABLE_SUDA_API
+#include "suda/linear_suda.hpp"
+#endif
 
 namespace llaisys::ops {
 
@@ -42,6 +45,12 @@ void linear(tensor_t out, tensor_t in, tensor_t weight, tensor_t bias) {
         return nvidia::linear(out->data(), in->data(), weight->data(),
                               has_bias ? bias->data() : nullptr,
                               out->dtype(), seq_len, in_features, out_features, has_bias);
+#endif
+#ifdef ENABLE_SUDA_API
+    case LLAISYS_DEVICE_SUDA:
+        return suda::linear(out->data(), in->data(), weight->data(),
+                            has_bias ? bias->data() : nullptr,
+                            out->dtype(), seq_len, in_features, out_features);
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

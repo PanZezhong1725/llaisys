@@ -9,6 +9,9 @@
 #ifdef ENABLE_NVIDIA_API
 #include "nvidia/rope_nvidia.hpp"
 #endif
+#ifdef ENABLE_SUDA_API
+#include "suda/rope_suda.hpp"
+#endif
 
 
 #include <cmath>
@@ -88,6 +91,13 @@ void rope(tensor_t out, tensor_t in, tensor_t pos_ids, float theta) {
         nvidia::rope(out->data(), in->data(),
                      reinterpret_cast<const int64_t *>(pos_ids->data()), theta,
                      out->dtype(), seq_len, num_heads, head_dim);
+        return;
+#endif
+#ifdef ENABLE_SUDA_API
+    case LLAISYS_DEVICE_SUDA:
+        suda::rope(out->data(), in->data(),
+                   reinterpret_cast<const int64_t *>(pos_ids->data()), theta,
+                   out->dtype(), seq_len, num_heads, head_dim);
         return;
 #endif
 

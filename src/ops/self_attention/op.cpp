@@ -122,6 +122,12 @@ void self_attention(tensor_t attn_val, tensor_t q, tensor_t k, tensor_t v, float
                                       attn_val->dtype(), seq_len, kv_len, num_heads,
                                       num_kv_heads, head_dim, scale);
 #endif
+#ifdef ENABLE_SUDA_API
+    case LLAISYS_DEVICE_SUDA:
+        return suda::self_attention(attn_val->data(), q->data(), k->data(), v->data(),
+                                    attn_val->dtype(), seq_len, kv_len, num_heads,
+                                    num_kv_heads, head_dim, scale);
+#endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;
     }
