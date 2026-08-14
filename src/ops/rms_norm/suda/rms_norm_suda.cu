@@ -47,22 +47,22 @@ __global__ void rms_norm_kernel(T *out, const T *in, const T *weight,
 
 template <typename T>
 static void launch_rms_norm(std::byte *out, const std::byte *in, const std::byte *weight,
-                            size_t rows, size_t cols, float eps) {
+                            size_t seq_len, size_t hidden_size, float eps) {
     const int block = 256;
-    rms_norm_kernel<T><<<static_cast<int>(rows), block, block * sizeof(float)>>>(
+    rms_norm_kernel<T><<<static_cast<int>(seq_len), block, block * sizeof(float)>>>(
         reinterpret_cast<T *>(out), reinterpret_cast<const T *>(in),
-        reinterpret_cast<const T *>(weight), cols, eps);
+        reinterpret_cast<const T *>(weight), hidden_size, eps);
 }
 
 void rms_norm(std::byte *out, const std::byte *in, const std::byte *weight,
-              llaisysDataType_t dtype, size_t rows, size_t cols, float eps) {
+              llaisysDataType_t dtype, size_t seq_len, size_t hidden_size, float eps) {
     switch (dtype) {
     case LLAISYS_DTYPE_F32:
-        return launch_rms_norm<float>(out, in, weight, rows, cols, eps);
+        return launch_rms_norm<float>(out, in, weight, seq_len, hidden_size, eps);
     case LLAISYS_DTYPE_F16:
-        return launch_rms_norm<__half>(out, in, weight, rows, cols, eps);
+        return launch_rms_norm<__half>(out, in, weight, seq_len, hidden_size, eps);
     case LLAISYS_DTYPE_BF16:
-        return launch_rms_norm<__nv_bfloat16>(out, in, weight, rows, cols, eps);
+        return launch_rms_norm<__nv_bfloat16>(out, in, weight, seq_len, hidden_size, eps);
     default:
         break;
     }

@@ -11,16 +11,15 @@ namespace llaisys::ops::suda {
 // Stage 1: each block reduces its slice and writes (value, index) to the temp buffer.
 template <typename T>
 __global__ void argmax_block_kernel(const T *vals, size_t size, T *block_vals, int *block_idx, int num_blocks) {
+    // Fixed-size shared memory (block size is 256). Using a static array avoids
+    // the nvcc issue with `extern __shared__` inside a template.
     __shared__ T s_vals[256];
     __shared__ int s_idx[256];
 
     int tid = threadIdx.x;
     int bid = blockIdx.x;
     size_t start = static_cast<size_t>(bid) * blockDim.x;
-    size_t end = start + blockDim.x;
-    if (end > size) {
-        end = size;
-    }
+    size_t end = min(start + blockDim.x, size);
 
     T local_max = static_cast<T>(0);
     int local_idx = 0;
@@ -95,8 +94,8 @@ static void launch_argmax(std::byte *max_idx, std::byte *max_val, const std::byt
     cudaFree(block_idx);
 }
 
-void argmax(std::byte *max_idx, std::byte *max_val, const std::byte *vals, llaisysDataType_t dtype, size_t size) {
-    switch (dtype) {
+void argmax(std::byte *max_idx, std::byte *max_val, const std::byte *vals, llaisysDataType_t type, size_t size) {
+    switch (type) {
     case LLAISYS_DTYPE_F32:
         return launch_argmax<float>(max_idx, max_val, vals, size);
     case LLAISYS_DTYPE_F16:

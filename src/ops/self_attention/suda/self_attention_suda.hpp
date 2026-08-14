@@ -1,8 +1,11 @@
 #pragma once
-#include "../op.hpp"
+#include "llaisys.h"
+
+#include <cstddef>
 
 namespace llaisys::ops::suda {
-void self_attention(std::byte *attn_val, const std::byte *q, const std::byte *k, const std::byte *v,
-                    llaisysDataType_t dtype, size_t qlen, size_t kvlen, size_t nhead,
-                    size_t nkvhead, size_t head_dim, float scale);
+void self_attention(std::byte *out, const std::byte *q, const std::byte *k, const std::byte *v,
+                    llaisysDataType_t dtype, size_t seq_len, size_t kv_len, size_t num_heads,
+                    size_t num_kv_heads, size_t head_dim, float scale);
+
 }

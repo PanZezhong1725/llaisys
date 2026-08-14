@@ -1,110 +1,171 @@
 #include "self_attention_suda.hpp"
 
+#include "../../../device/suda/suda_resource.cuh"
+
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
+#include <cuda_runtime.h>
+#include <cublas_v2.h>
 
 #include <cstdint>
+#include <type_traits>
 
 namespace llaisys::ops::suda {
 
-// Layout:
-//   q, out: [qlen, nhead, head_dim]   -> ld_qo = nhead * head_dim
-//   k, v:   [kvlen, nkvhead, head_dim] -> ld_kv = nkvhead * head_dim
-// GQA: query head h maps to kv head (h / (nhead / nkvhead)).
+// Apply causal mask + softmax to a scores matrix [seq_len, kv_len] (row-major, type T).
+// One block per row.
 template <typename T>
-__global__ void self_attention_kernel(T *out, const T *q, const T *k, const T *v,
-                                      size_t qlen, size_t kvlen, size_t nhead,
-                                      size_t nkvhead, size_t head_dim, float scale) {
-    extern __shared__ float s_scores[]; // blockDim.x * kvlen
+__global__ void softmax_causal_kernel(T *scores, size_t seq_len, size_t kv_len) {
+    size_t i = blockIdx.x;
+    size_t tid = threadIdx.x;
+    size_t diag_shift = kv_len - seq_len;
+    size_t max_j = i + diag_shift;
 
-    int tid = threadIdx.x;
-    size_t global = blockIdx.x * blockDim.x + threadIdx.x;
-    size_t total = qlen * nhead;
-    if (global >= total) {
-        return;
+    T *row = scores + i * kv_len;
+
+    // Apply causal mask: position i can only attend to j <= i + (kv_len - seq_len)
+    for (size_t j = tid; j < kv_len; j += blockDim.x) {
+        if (j > max_j) {
+            row[j] = static_cast<T>(-INFINITY);
+        }
     }
+    __syncthreads();
 
-    size_t h = global % nhead;
-    size_t qi = global / nhead;
-
-    size_t num_repeats = nhead / nkvhead;
-    size_t src_kv_head = h / num_repeats;
-
-    size_t ld_qo = nhead * head_dim;
-    size_t ld_kv = nkvhead * head_dim;
-
-    const T *q_pos = q + qi * ld_qo + h * head_dim;
-    float *scores = s_scores + tid * kvlen;
-
-    // Causal mask: position i attends to j <= i + (kvlen - qlen).
-    size_t diag_shift = kvlen - qlen;
-    size_t max_j = qi + diag_shift;
-
-    // Compute scores + causal mask, and track the row max for stability.
+    // Find row max for numerical stability.
     float local_max = -INFINITY;
-    for (size_t j = 0; j < kvlen; ++j) {
-        float s;
-        if (j <= max_j) {
-            const T *k_pos = k + j * ld_kv + src_kv_head * head_dim;
-            s = 0.0f;
-            for (size_t d = 0; d < head_dim; ++d) {
-                s += static_cast<float>(q_pos[d]) * static_cast<float>(k_pos[d]);
-            }
-            s *= scale;
-        } else {
-            s = -INFINITY;
-        }
-        scores[j] = s;
-        if (s > local_max) {
-            local_max = s;
-        }
+    for (size_t j = tid; j < kv_len; j += blockDim.x) {
+        local_max = fmaxf(local_max, static_cast<float>(row[j]));
     }
-
-    // exp and sum.
-    float sum = 0.0f;
-    for (size_t j = 0; j < kvlen; ++j) {
-        float e = expf(scores[j] - local_max);
-        scores[j] = e;
-        sum += e;
-    }
-
-    // Weighted sum of V.
-    for (size_t d = 0; d < head_dim; ++d) {
-        float acc = 0.0f;
-        for (size_t j = 0; j < kvlen; ++j) {
-            const T *v_pos = v + j * ld_kv + src_kv_head * head_dim;
-            acc += scores[j] * static_cast<float>(v_pos[d]);
+    __shared__ float s_max[256];
+    s_max[tid] = local_max;
+    __syncthreads();
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            s_max[tid] = fmaxf(s_max[tid], s_max[tid + stride]);
         }
-        out[qi * ld_qo + h * head_dim + d] = static_cast<T>(acc / sum);
+        __syncthreads();
+    }
+    float row_max = s_max[0];
+    __syncthreads();
+
+    // Compute exp and sum.
+    float local_sum = 0.0f;
+    for (size_t j = tid; j < kv_len; j += blockDim.x) {
+        float v = expf(static_cast<float>(row[j]) - row_max);
+        row[j] = static_cast<T>(v);
+        local_sum += v;
+    }
+    __shared__ float s_sum[256];
+    s_sum[tid] = local_sum;
+    __syncthreads();
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            s_sum[tid] += s_sum[tid + stride];
+        }
+        __syncthreads();
+    }
+    float row_sum = s_sum[0];
+    __syncthreads();
+
+    // Normalize.
+    for (size_t j = tid; j < kv_len; j += blockDim.x) {
+        row[j] = static_cast<T>(static_cast<float>(row[j]) / row_sum);
+    }
+}
+
+template <typename T>
+static cudaDataType_t cuda_type() {
+    if constexpr (std::is_same_v<T, float>) {
+        return CUDA_R_32F;
+    } else if constexpr (std::is_same_v<T, __half>) {
+        return CUDA_R_16F;
+    } else {
+        return CUDA_R_16BF;
     }
 }
 
 template <typename T>
 static void launch_self_attention(std::byte *out, const std::byte *q, const std::byte *k,
-                                  const std::byte *v, size_t qlen, size_t kvlen,
-                                  size_t nhead, size_t nkvhead, size_t head_dim, float scale) {
-    size_t total = qlen * nhead;
-    const int block = 128;
-    int grid = static_cast<int>((total + block - 1) / block);
-    size_t shmem = static_cast<size_t>(block) * kvlen * sizeof(float);
-    self_attention_kernel<T><<<grid, block, shmem>>>(
-        reinterpret_cast<T *>(out),
-        reinterpret_cast<const T *>(q),
-        reinterpret_cast<const T *>(k),
-        reinterpret_cast<const T *>(v),
-        qlen, kvlen, nhead, nkvhead, head_dim, scale);
+                                  const std::byte *v, size_t seq_len, size_t kv_len,
+                                  size_t num_heads, size_t num_kv_heads, size_t head_dim,
+                                  float scale) {
+    cublasHandle_t handle = llaisys::device::suda::getCublasHandle();
+
+    size_t num_repeats = num_heads / num_kv_heads;
+
+    // Temporary scores buffer [seq_len, kv_len] in the same dtype as the inputs.
+    T *scores = nullptr;
+    cudaMalloc(&scores, seq_len * kv_len * sizeof(T));
+
+    cudaDataType_t type = cuda_type<T>();
+    float alpha = 0.0f;
+    float beta = 0.0f;
+
+    // For FP32, use the default algorithm to avoid TF32 (reduced precision).
+    // For FP16/BF16, use tensor cores for performance.
+    cublasGemmAlgo_t algo = CUBLAS_GEMM_DEFAULT_TENSOR_OP;
+    if constexpr (std::is_same_v<T, float>) {
+        algo = CUBLAS_GEMM_DEFAULT;
+    }
+
+    for (size_t h = 0; h < num_heads; h++) {
+
+        size_t src_kv_head = h / num_repeats;
+
+        // Tensors are stored as [seq_len, num_heads, head_dim].
+        const T *q_h = reinterpret_cast<const T *>(q) + h * head_dim;
+        const T *k_h = reinterpret_cast<const T *>(k) + src_kv_head * head_dim;
+        const T *v_h = reinterpret_cast<const T *>(v) + src_kv_head * head_dim;
+        T *out_h = reinterpret_cast<T *>(out) + h * head_dim;
+
+        // Leading dimension (stride between rows in the 2D matrix view):
+        // Q, out: [seq_len, num_heads, head_dim] → stride = num_heads * head_dim
+        // K, V:   [kv_len, num_kv_heads, head_dim] → stride = num_kv_heads * head_dim
+        size_t ld_qo = num_heads * head_dim;
+        size_t ld_kv = num_kv_heads * head_dim;
+
+        // GEMM1: scores = Q_h @ K_h^T * scale
+        // Using column-major cuBLAS: scores^T = K_h @ Q_h^T
+        alpha = scale;
+        beta = 0.0f;
+        cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                     static_cast<int>(kv_len), static_cast<int>(seq_len), static_cast<int>(head_dim),
+                     &alpha,
+                     k_h, type, static_cast<int>(ld_kv),
+                     q_h, type, static_cast<int>(ld_qo),
+                     &beta,
+                     scores, type, static_cast<int>(kv_len),
+                     CUDA_R_32F, algo);
+
+        // Causal mask + softmax over the kv dimension.
+        softmax_causal_kernel<T><<<static_cast<int>(seq_len), 256>>>(scores, seq_len, kv_len);
+
+        // GEMM2: out_h = scores @ V_h
+        alpha = 1.0f;
+        beta = 0.0f;
+        cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                     static_cast<int>(head_dim), static_cast<int>(seq_len), static_cast<int>(kv_len),
+                     &alpha,
+                     v_h, type, static_cast<int>(ld_kv),
+                     scores, type, static_cast<int>(kv_len),
+                     &beta,
+                     out_h, type, static_cast<int>(ld_qo),
+                     CUDA_R_32F, algo);
+    }
+
+    cudaFree(scores);
 }
 
 void self_attention(std::byte *out, const std::byte *q, const std::byte *k, const std::byte *v,
-                    llaisysDataType_t dtype, size_t qlen, size_t kvlen, size_t nhead,
-                    size_t nkvhead, size_t head_dim, float scale) {
+                    llaisysDataType_t dtype, size_t seq_len, size_t kv_len, size_t num_heads,
+                    size_t num_kv_heads, size_t head_dim, float scale) {
     switch (dtype) {
     case LLAISYS_DTYPE_F32:
-        return launch_self_attention<float>(out, q, k, v, qlen, kvlen, nhead, nkvhead, head_dim, scale);
+        return launch_self_attention<float>(out, q, k, v, seq_len, kv_len, num_heads, num_kv_heads, head_dim, scale);
     case LLAISYS_DTYPE_F16:
-        return launch_self_attention<__half>(out, q, k, v, qlen, kvlen, nhead, nkvhead, head_dim, scale);
+        return launch_self_attention<__half>(out, q, k, v, seq_len, kv_len, num_heads, num_kv_heads, head_dim, scale);
     case LLAISYS_DTYPE_BF16:
-        return launch_self_attention<__nv_bfloat16>(out, q, k, v, qlen, kvlen, nhead, nkvhead, head_dim, scale);
+        return launch_self_attention<__nv_bfloat16>(out, q, k, v, seq_len, kv_len, num_heads, num_kv_heads, head_dim, scale);
     default:
         break;
     }

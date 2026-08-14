@@ -2,18 +2,6 @@ import llaisys
 import torch
 
 
-def _load_kind(device_name):
-    # For suda, torch reference tensors live on CPU while llaisys tensors live
-    # on the suda device, so the transfer is host-to-device. For cpu/nvidia,
-    # torch and llaisys tensors share the same memory space (D2D is correct).
-    return llaisys.MemcpyKind.H2D if device_name == "suda" else llaisys.MemcpyKind.D2D
-
-
-def _readback_kind(device_name):
-    # For suda, read results back from the device to CPU-hosted torch tensors.
-    return llaisys.MemcpyKind.D2H if device_name == "suda" else llaisys.MemcpyKind.D2D
-
-
 def random_tensor(
     shape, dtype_name, device_name, device_id=0, scale=None, bias=None
 ) -> tuple[torch.Tensor, llaisys.Tensor]:
@@ -40,7 +28,7 @@ def random_tensor(
         llaisys_tensor.data_ptr(),
         torch_tensor.data_ptr(),
         bytes_,
-        _load_kind(device_name),
+        llaisys.MemcpyKind.D2D,
     )
 
     return torch_tensor, llaisys_tensor
@@ -68,7 +56,7 @@ def random_int_tensor(shape, device_name, dtype_name="i64", device_id=0, low=0, 
         llaisys_tensor.data_ptr(),
         torch_tensor.data_ptr(),
         bytes_,
-        _load_kind(device_name),
+        llaisys.MemcpyKind.D2D,
     )
 
     return torch_tensor, llaisys_tensor
@@ -96,7 +84,7 @@ def zero_tensor(
         llaisys_tensor.data_ptr(),
         torch_tensor.data_ptr(),
         bytes_,
-        _load_kind(device_name),
+        llaisys.MemcpyKind.D2D,
     )
 
     return torch_tensor, llaisys_tensor
@@ -119,7 +107,7 @@ def arrange_tensor(
         llaisys_tensor.data_ptr(),
         torch_tensor.data_ptr(),
         bytes_,
-        _load_kind(device_name),
+        llaisys.MemcpyKind.D2D,
     )
 
     return torch_tensor, llaisys_tensor
@@ -144,11 +132,12 @@ def check_equal(
         else:  # TODO: Support negative strides in the future
             raise ValueError("Negative strides are not supported yet")
 
-    dev_name = device_name(llaisys_result.device_type())
     tmp = torch.zeros(
         (right + 1,),
         dtype=torch_answer.dtype,
-        device=torch_device(dev_name, llaisys_result.device_id()),
+        device=torch_device(
+            device_name(llaisys_result.device_type()), llaisys_result.device_id()
+        ),
     )
     result = torch.as_strided(tmp, shape, strides)
     api = llaisys.RuntimeAPI(llaisys_result.device_type())
@@ -156,7 +145,7 @@ def check_equal(
         result.data_ptr(),
         llaisys_result.data_ptr(),
         (right + 1) * tmp.element_size(),
-        _readback_kind(dev_name),
+        llaisys.MemcpyKind.D2D,
     )
 
     if strict:
@@ -200,7 +189,7 @@ def torch_device(device_name: str, device_id=0):
     elif device_name == "nvidia":
         return torch.device(f"cuda:{device_id}")
     elif device_name == "suda":
-        return torch.device("cpu")  # no torch support for suda, keep reference on CPU
+        return torch.device(f"cuda:{device_id}")
     else:
         raise ValueError(f"Unsupported device name: {device_name}")
 

@@ -2,6 +2,7 @@
 
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
+#include <cuda_runtime.h>
 
 #include <cstdint>
 
@@ -26,14 +27,16 @@ __global__ void rope_kernel(T *out, const T *in, const int64_t *pos_ids, float t
     float x1 = static_cast<float>(in[base_idx + j]);
     float x2 = static_cast<float>(in[base_idx + j + half_dim]);
 
+    // Compute cos/sin on device. NOTE: the Iluvatar CoreX (ivcore) backend
+    // does not provide a working float64 (double) math path (its torch port
+    // warns "Limited support for torch.double"), so use float32 here.
     // freq = pos / (theta ** (2*j/head_dim))
-    double exponent = 2.0 * static_cast<double>(j) / static_cast<double>(head_dim);
-    double denom = pow(static_cast<double>(theta), exponent);
-    double freq = static_cast<double>(pos_ids[i]) / denom;
-    float c = static_cast<float>(cos(freq));
-    float s = static_cast<float>(sin(freq));
+    float exponent = 2.0f * static_cast<float>(j) / static_cast<float>(head_dim);
+    float denom = powf(theta, exponent);
+    float freq = static_cast<float>(pos_ids[i]) / denom;
+    float c = cosf(freq);
+    float s = sinf(freq);
 
-    // Match Torch: x1 * cos - x2 * sin, x2 * cos + x1 * sin
     float out_first = x1 * c - x2 * s;
     float out_second = x2 * c + x1 * s;
 
@@ -58,11 +61,14 @@ void rope(std::byte *out, const std::byte *in, const int64_t *pos_ids, float the
           llaisysDataType_t dtype, size_t seq_len, size_t num_heads, size_t head_dim) {
     switch (dtype) {
     case LLAISYS_DTYPE_F32:
-        return launch_rope<float>(out, in, pos_ids, theta, seq_len, num_heads, head_dim);
+        launch_rope<float>(out, in, pos_ids, theta, seq_len, num_heads, head_dim);
+        break;
     case LLAISYS_DTYPE_F16:
-        return launch_rope<__half>(out, in, pos_ids, theta, seq_len, num_heads, head_dim);
+        launch_rope<__half>(out, in, pos_ids, theta, seq_len, num_heads, head_dim);
+        break;
     case LLAISYS_DTYPE_BF16:
-        return launch_rope<__nv_bfloat16>(out, in, pos_ids, theta, seq_len, num_heads, head_dim);
+        launch_rope<__nv_bfloat16>(out, in, pos_ids, theta, seq_len, num_heads, head_dim);
+        break;
     default:
         break;
     }

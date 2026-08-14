@@ -18,11 +18,11 @@ if has_config("nv-gpu") then
     includes("xmake/nvidia.lua")
 end
 
--- Suda --
+-- SUDA (Iluvatar 天数) --
 option("suda-gpu")
     set_default(false)
     set_showmenu(true)
-    set_description("Whether to compile implementations for Suda (Days Technology) GPU")
+    set_description("Whether to compile implementations for Iluvatar SUDA GPU")
 option_end()
 
 if has_config("suda-gpu") then
@@ -132,6 +132,18 @@ target("llaisys")
         -- Link against the CUDA runtime library to resolve CUDA device code
         -- registration symbols (e.g. __cudaRegisterLinkedBinary).
         add_links("cudart")
+        if is_plat("windows") then
+            add_linkdirs("$(env CUDA_PATH)/lib/x64")
+        else
+            add_linkdirs("$(env CUDA_PATH)/lib64")
+        end
+        add_includedirs("$(env CUDA_PATH)/include")
+    end
+
+    if has_config("suda-gpu") then
+        -- Iluvatar CoreX exposes a CUDA-compatible toolchain; link the CUDA
+        -- runtime/BLAS libraries to resolve device code registration symbols.
+        add_links("cudart", "cublas", "cublasLt")
         if is_plat("windows") then
             add_linkdirs("$(env CUDA_PATH)/lib/x64")
         else

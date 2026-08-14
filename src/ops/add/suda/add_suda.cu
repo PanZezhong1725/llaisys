@@ -25,8 +25,8 @@ static void launch_add(std::byte *c, const std::byte *a, const std::byte *b, siz
                                    numel);
 }
 
-void add(std::byte *c, const std::byte *a, const std::byte *b, llaisysDataType_t dtype, size_t numel) {
-    switch (dtype) {
+void add(std::byte *c, const std::byte *a, const std::byte *b, llaisysDataType_t type, size_t numel) {
+    switch (type) {
     case LLAISYS_DTYPE_F32:
         return launch_add<float>(c, a, b, numel);
     case LLAISYS_DTYPE_F16:

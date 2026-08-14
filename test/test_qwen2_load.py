@@ -14,7 +14,13 @@ def main():
     model_path = sys.argv[1] if len(sys.argv) > 1 else "D:\\models\\DeepSeek-R1-Distill-Qwen-1.5B"
     device_name = sys.argv[2] if len(sys.argv) > 2 else "cpu"
 
-    device = DeviceType.CPU if device_name == "cpu" else DeviceType.NVIDIA
+    device = (
+        DeviceType.CPU
+        if device_name == "cpu"
+        else DeviceType.NVIDIA
+        if device_name == "nvidia"
+        else DeviceType.SUDA
+    )
 
     print(f"Loading model from: {model_path}")
     print(f"Device: {device_name}")

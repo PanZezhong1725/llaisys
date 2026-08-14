@@ -22,7 +22,8 @@ __global__ void swiglu_kernel(T *out, const T *gate, const T *up, size_t numel) 
 
 template <typename T>
 static void launch_swiglu(std::byte *out, const std::byte *gate, const std::byte *up,
-                          size_t numel) {
+                          size_t seq_len, size_t hidden_size) {
+    size_t numel = seq_len * hidden_size;
     const int block = 256;
     int grid = static_cast<int>((numel + block - 1) / block);
     swiglu_kernel<T><<<grid, block>>>(reinterpret_cast<T *>(out),
@@ -31,14 +32,14 @@ static void launch_swiglu(std::byte *out, const std::byte *gate, const std::byte
 }
 
 void swiglu(std::byte *out, const std::byte *gate, const std::byte *up,
-            llaisysDataType_t dtype, size_t numel) {
+            llaisysDataType_t dtype, size_t seq_len, size_t hidden_size) {
     switch (dtype) {
     case LLAISYS_DTYPE_F32:
-        return launch_swiglu<float>(out, gate, up, numel);
+        return launch_swiglu<float>(out, gate, up, seq_len, hidden_size);
     case LLAISYS_DTYPE_F16:
-        return launch_swiglu<__half>(out, gate, up, numel);
+        return launch_swiglu<__half>(out, gate, up, seq_len, hidden_size);
     case LLAISYS_DTYPE_BF16:
-        return launch_swiglu<__nv_bfloat16>(out, gate, up, numel);
+        return launch_swiglu<__nv_bfloat16>(out, gate, up, seq_len, hidden_size);
     default:
         break;
     }

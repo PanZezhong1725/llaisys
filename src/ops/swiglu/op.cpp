@@ -40,7 +40,7 @@ void swiglu(tensor_t out, tensor_t gate, tensor_t up) {
 #ifdef ENABLE_SUDA_API
     case LLAISYS_DEVICE_SUDA:
         return suda::swiglu(out->data(), gate->data(), up->data(),
-                            out->dtype(), seq_len * hidden_size);
+                            out->dtype(), seq_len, hidden_size);
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

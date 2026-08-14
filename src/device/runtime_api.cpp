@@ -88,7 +88,8 @@ const LlaisysRuntimeAPI *getRuntimeAPI(llaisysDeviceType_t device_type) {
         return getUnsupportedRuntimeAPI();
 #endif
     default:
-        return getUnsupportedRuntimeAPI();
+        EXCEPTION_UNSUPPORTED_DEVICE;
+        return nullptr;
     }
 }
 } // namespace llaisys::device

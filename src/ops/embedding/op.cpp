@@ -39,8 +39,8 @@ void embedding(tensor_t out, tensor_t index, tensor_t weight) {
 #endif
 #ifdef ENABLE_SUDA_API
     case LLAISYS_DEVICE_SUDA:
-        return suda::embedding(out->data(), reinterpret_cast<const int64_t *>(index->data()),
-                               weight->data(), out->dtype(), seq_len, embed_dim);
+        return suda::embedding(out->data(), index->data(), weight->data(),
+                               out->dtype(), seq_len, embed_dim, vocab_size);
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;
