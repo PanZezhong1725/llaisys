@@ -4,6 +4,15 @@
 #include "../../utils.hpp"
 
 #include "cpu/add_cpu.hpp"
+#ifdef ENABLE_NVIDIA_API
+#include "nvidia/add_nvidia.hpp"
+#endif
+#ifdef ENABLE_ILUVATAR_API
+#include "icore/add_nvidia.hpp"
+#endif
+#ifdef ENABLE_MUSA_API
+#include "musa/add_musa.hpp"
+#endif
 
 namespace llaisys::ops {
 void add(tensor_t c, tensor_t a, tensor_t b) {
@@ -25,8 +34,15 @@ void add(tensor_t c, tensor_t a, tensor_t b) {
         return cpu::add(c->data(), a->data(), b->data(), c->dtype(), c->numel());
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
-        TO_BE_IMPLEMENTED();
-        return;
+        return nvidia::add(c->data(), a->data(), b->data(), c->dtype(), c->numel());
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    case LLAISYS_DEVICE_ILUVATAR:
+        return iluvatar::add(c->data(), a->data(), b->data(), c->dtype(), c->numel());
+#endif
+#ifdef ENABLE_MUSA_API
+    case LLAISYS_DEVICE_MUSA:
+        return musa::add(c->data(), a->data(), b->data(), c->dtype(), c->numel());
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

@@ -1,0 +1,87 @@
+#include "rms_norm_musa.hpp"
+
+#include "../../../utils.hpp"
+#include "../../../utils/musa_check.hpp"
+
+#include <cmath>
+#include <cfloat>
+#include <musa_fp16.h>
+#include <musa_bf16.h>
+
+constexpr int THREAD_NUM = 256;
+
+template <typename T>
+__global__ void rms_norm_kernel(const T *in, const T *weight, T *out, size_t numel, float eps, size_t d) {
+    __shared__ float ss[THREAD_NUM]; // 保存每行的平方和，block 号即为行号
+    __shared__ float rms_row; // 保存每行的 rms 值
+
+    const size_t row_index = blockIdx.x;
+
+    ss[threadIdx.x] = 0.0f;
+
+    // gird-stride loop，每个线程处理一行中的多个元素，计算平方和
+    for (size_t col_index = threadIdx.x; col_index < d; col_index += THREAD_NUM) {
+        float v = static_cast<float>(in[row_index * d + col_index]);
+        ss[threadIdx.x] += v * v;
+    }
+
+    __syncthreads();
+
+    // 使用归约算法计算平方和，最终结果保存在 ss[0] 中
+    for (int stride = (d < THREAD_NUM ? d : THREAD_NUM) / 2; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            ss[threadIdx.x] += ss[threadIdx.x + stride];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0)
+        rms_row = 1 / sqrt((ss[0] / d) + eps); // 计算 rms 值，并取倒数，方便后续计算
+    __syncthreads();
+
+    for (size_t col_index = threadIdx.x; col_index < d; col_index += THREAD_NUM) {
+        out[row_index * d + col_index] = static_cast<T>((static_cast<float>(in[row_index * d + col_index]) * rms_row) * static_cast<float>(weight[col_index]));
+    }
+}
+
+namespace llaisys::ops::musa {
+void rms_norm(tensor_t out, tensor_t in, tensor_t weight, llaisysDataType_t type, float eps) {
+    const int blocks = in->shape()[0];
+
+    switch (type)
+    {
+    case LLAISYS_DTYPE_F32:
+        rms_norm_kernel<float><<<blocks, THREAD_NUM>>>(
+            reinterpret_cast<const float *>(in->data()),
+            reinterpret_cast<const float *>(weight->data()),
+            reinterpret_cast<float *>(out->data()),
+            in->numel(), eps,
+            weight->numel()
+        );
+        break;
+    case LLAISYS_DTYPE_F16:
+        rms_norm_kernel<__half><<<blocks, THREAD_NUM>>>(
+            reinterpret_cast<const __half *>(in->data()),
+            reinterpret_cast<const __half *>(weight->data()),
+            reinterpret_cast<__half *>(out->data()),
+            in->numel(), eps,
+            weight->numel()
+        );
+        break;
+    case LLAISYS_DTYPE_BF16:
+        rms_norm_kernel<__mt_bfloat16><<<blocks, THREAD_NUM>>>(
+            reinterpret_cast<const __mt_bfloat16 *>(in->data()),
+            reinterpret_cast<const __mt_bfloat16 *>(weight->data()),
+            reinterpret_cast<__mt_bfloat16 *>(out->data()),
+            in->numel(), eps,
+            weight->numel()
+        );
+        break;
+    default:
+        EXCEPTION_UNSUPPORTED_DATATYPE(type);
+    }
+
+    CHECK_MUSA(musaGetLastError());
+    CHECK_MUSA(musaDeviceSynchronize());
+}
+} // namespace llaisys::ops::musa

@@ -1,0 +1,8 @@
+#include "add/icore/add_nvidia.ivcore"
+#include "argmax/icore/argmax_nvidia.ivcore"
+#include "embedding/icore/embedding_nvidia.ivcore"
+#include "linear/icore/linear_nvidia.ivcore"
+#include "rms_norm/icore/rms_norm_nvidia.ivcore"
+#include "rope/icore/rope_nvidia.ivcore"
+#include "self_attention/icore/self_attention_nvidia.ivcore"
+#include "swiglu/icore/swiglu_nvidia.ivcore"

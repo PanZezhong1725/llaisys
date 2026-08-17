@@ -31,6 +31,20 @@ def load_shared_library():
     if not os.path.isfile(lib_path):
         raise FileNotFoundError(f"Shared library not found: {lib_path}")
 
+    # CUDA kernels are built as a separate shared library so nvcc can perform
+    # device linking. Load it globally before the main C API library.
+    if sys.platform.startswith("linux"):
+        corex_home = os.environ.get("COREX_HOME", "/usr/local/corex")
+        corex_cudart = Path(corex_home) / "lib64" / "libcudart.so"
+        if corex_cudart.is_file():
+            ctypes.CDLL(str(corex_cudart), mode=ctypes.RTLD_GLOBAL)
+        cuda_lib = lib_dir / "libllaisys-ops-nvidia.so"
+        if cuda_lib.is_file():
+            ctypes.CDLL(str(cuda_lib), mode=ctypes.RTLD_GLOBAL)
+        else:
+            # CoreX links GPU kernels into the main library as a static archive.
+            pass
+
     return ctypes.CDLL(str(lib_path))
 
 
