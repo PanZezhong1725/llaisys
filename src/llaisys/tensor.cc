@@ -1,6 +1,20 @@
 #include "llaisys_tensor.hpp"
 
+#include <exception>
+#include <iostream>
 #include <vector>
+
+namespace {
+
+void reportTensorError(const char *api, const std::exception &error) noexcept {
+    std::cerr << "[ERROR] " << api << " failed: " << error.what() << std::endl;
+}
+
+void reportUnknownTensorError(const char *api) noexcept {
+    std::cerr << "[ERROR] " << api << " failed with an unknown exception." << std::endl;
+}
+
+} // namespace
 
 __C {
     llaisysTensor_t tensorCreate(
@@ -9,8 +23,23 @@ __C {
         llaisysDataType_t dtype,
         llaisysDeviceType_t device_type,
         int device_id) {
-        std::vector<size_t> shape_vec(shape, shape + ndim);
-        return new LlaisysTensor{llaisys::Tensor::create(shape_vec, dtype, device_type, device_id)};
+        try {
+            if (ndim != 0 && shape == nullptr) {
+                return nullptr;
+            }
+            std::vector<size_t> shape_vec;
+            if (ndim != 0) {
+                shape_vec.assign(shape, shape + ndim);
+            }
+            return new LlaisysTensor{
+                llaisys::Tensor::create(shape_vec, dtype, device_type, device_id)};
+        } catch (const std::exception &error) {
+            reportTensorError("tensorCreate", error);
+            return nullptr;
+        } catch (...) {
+            reportUnknownTensorError("tensorCreate");
+            return nullptr;
+        }
     }
 
     void tensorDestroy(
@@ -75,15 +104,44 @@ __C {
         llaisysTensor_t tensor,
         size_t * shape,
         size_t ndim) {
-        std::vector<size_t> shape_vec(shape, shape + ndim);
-        return new LlaisysTensor{tensor->tensor->view(shape_vec)};
+        try {
+            if (tensor == nullptr || (ndim != 0 && shape == nullptr)) {
+                return nullptr;
+            }
+            std::vector<size_t> shape_vec;
+            if (ndim != 0) {
+                shape_vec.assign(shape, shape + ndim);
+            }
+            return new LlaisysTensor{tensor->tensor->view(shape_vec)};
+        } catch (const std::exception &error) {
+            reportTensorError("tensorView", error);
+            return nullptr;
+        } catch (...) {
+            reportUnknownTensorError("tensorView");
+            return nullptr;
+        }
     }
 
     llaisysTensor_t tensorPermute(
         llaisysTensor_t tensor,
         size_t * order) {
-        std::vector<size_t> order_vec(order, order + tensor->tensor->ndim());
-        return new LlaisysTensor{tensor->tensor->permute(order_vec)};
+        try {
+            if (tensor == nullptr
+                || (tensor->tensor->ndim() != 0 && order == nullptr)) {
+                return nullptr;
+            }
+            std::vector<size_t> order_vec;
+            if (tensor->tensor->ndim() != 0) {
+                order_vec.assign(order, order + tensor->tensor->ndim());
+            }
+            return new LlaisysTensor{tensor->tensor->permute(order_vec)};
+        } catch (const std::exception &error) {
+            reportTensorError("tensorPermute", error);
+            return nullptr;
+        } catch (...) {
+            reportUnknownTensorError("tensorPermute");
+            return nullptr;
+        }
     }
 
     llaisysTensor_t tensorSlice(
@@ -91,6 +149,17 @@ __C {
         size_t dim,
         size_t start,
         size_t end) {
-        return new LlaisysTensor{tensor->tensor->slice(dim, start, end)};
+        try {
+            if (tensor == nullptr) {
+                return nullptr;
+            }
+            return new LlaisysTensor{tensor->tensor->slice(dim, start, end)};
+        } catch (const std::exception &error) {
+            reportTensorError("tensorSlice", error);
+            return nullptr;
+        } catch (...) {
+            reportUnknownTensorError("tensorSlice");
+            return nullptr;
+        }
     }
 }

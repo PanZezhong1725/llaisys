@@ -45,6 +45,35 @@ def test_op_linear(
         )
 
 
+def copy_to_llaisys(source, destination):
+    api = llaisys.RuntimeAPI(destination.device_type())
+    api.memcpy_sync(
+        destination.data_ptr(),
+        source.data_ptr(),
+        source.numel() * source.element_size(),
+        llaisys.MemcpyKind.D2D,
+    )
+
+
+def test_low_precision_bias_accumulation(device_name):
+    print("   low-precision bias accumulation regression, dtype <f16>")
+    x, x_ = random_tensor((1, 2), "f16", device_name)
+    w, w_ = random_tensor((1, 2), "f16", device_name)
+    bias, bias_ = random_tensor((1,), "f16", device_name)
+    out, out_ = random_tensor((1, 1), "f16", device_name)
+
+    x.fill_(300.0)
+    w.fill_(120.0)
+    bias.fill_(-64992.0)
+    for source, destination in ((x, x_), (w, w_), (bias, bias_)):
+        copy_to_llaisys(source, destination)
+
+    torch_linear(out, x, w, bias)
+    llaisys.Ops.linear(out_, x_, w_, bias_)
+    assert out.item() == 7008.0
+    assert check_equal(out_, out, strict=True)
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -54,6 +83,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     testShapes = [
         ((2, 3), (2, 4), (3, 4), True),
+        ((2, 3), (2, 4), (3, 4), False),
+        ((2, 3), (2, 0), (3, 0), True),
+        ((2, 3), (2, 0), (3, 0), False),
         ((512, 4096), (512, 4096), (4096, 4096), True),
     ]
     testDtypePrec = [
@@ -66,5 +98,7 @@ if __name__ == "__main__":
     for shapes in testShapes:
         for dtype_name, atol, rtol in testDtypePrec:
             test_op_linear(*shapes, dtype_name, atol, rtol, args.device, args.profile)
+
+    test_low_precision_bias_accumulation(args.device)
 
     print("\033[92mTest passed!\033[0m\n")

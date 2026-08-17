@@ -1,4 +1,3 @@
-from calendar import c
 import sys
 import os
 
@@ -27,7 +26,7 @@ def test_op_argmax(
     torch_argmax(max_idx, max_val, vals)
     llaisys.Ops.argmax(max_idx_, max_val_, vals_)
 
-    assert check_equal(max_val_, max_val, strict=True) or check_equal(
+    assert check_equal(max_val_, max_val, strict=True) and check_equal(
         max_idx_, max_idx, strict=True
     )
 

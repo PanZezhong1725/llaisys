@@ -12,32 +12,48 @@
 #include "../ops/self_attention/op.hpp"
 #include "../ops/swiglu/op.hpp"
 
+namespace {
+llaisys::tensor_t tensorOf(llaisysTensor_t handle) {
+    return handle == nullptr ? nullptr : handle->tensor;
+}
+} // namespace
+
 __C {
-    void llaisysAdd(llaisysTensor_t c, llaisysTensor_t a, llaisysTensor_t b) {
-        llaisys::ops::add(c->tensor, a->tensor, b->tensor);
-    }
-    void llaisysArgmax(llaisysTensor_t max_idx, llaisysTensor_t max_val, llaisysTensor_t vals) {
-        llaisys::ops::argmax(max_idx->tensor, max_val->tensor, vals->tensor);
-    }
-    void llaisysEmbedding(llaisysTensor_t out, llaisysTensor_t index, llaisysTensor_t weight) {
-        llaisys::ops::embedding(out->tensor, index->tensor, weight->tensor);
-    }
-    void llaisysLinear(llaisysTensor_t out, llaisysTensor_t in, llaisysTensor_t weight, llaisysTensor_t bias) {
-        llaisys::ops::linear(out->tensor, in->tensor, weight->tensor, bias->tensor);
-    }
-    void llaisysRearrange(llaisysTensor_t out, llaisysTensor_t in) {
-        llaisys::ops::rearrange(out->tensor, in->tensor);
-    }
-    void llaisysRmsNorm(llaisysTensor_t out, llaisysTensor_t in, llaisysTensor_t weight, float eps) {
-        llaisys::ops::rms_norm(out->tensor, in->tensor, weight->tensor, eps);
-    }
-    void llaisysROPE(llaisysTensor_t out, llaisysTensor_t in, llaisysTensor_t pos_ids, float theta) {
-        llaisys::ops::rope(out->tensor, in->tensor, pos_ids->tensor, theta);
-    }
-    void llaisysSelfAttention(llaisysTensor_t attn_val, llaisysTensor_t q, llaisysTensor_t k, llaisysTensor_t v, float scale) {
-        llaisys::ops::self_attention(attn_val->tensor, q->tensor, k->tensor, v->tensor, scale);
-    }
-    void llaisysSwiGLU(llaisysTensor_t out, llaisysTensor_t gate, llaisysTensor_t up) {
-        llaisys::ops::swiglu(out->tensor, gate->tensor, up->tensor);
-    }
+
+void llaisysAdd(llaisysTensor_t output, llaisysTensor_t left, llaisysTensor_t right) {
+    llaisys::ops::add(tensorOf(output), tensorOf(left), tensorOf(right));
+}
+
+void llaisysArgmax(llaisysTensor_t index, llaisysTensor_t value, llaisysTensor_t input) {
+    llaisys::ops::argmax(tensorOf(index), tensorOf(value), tensorOf(input));
+}
+
+void llaisysEmbedding(llaisysTensor_t output, llaisysTensor_t indices, llaisysTensor_t table) {
+    llaisys::ops::embedding(tensorOf(output), tensorOf(indices), tensorOf(table));
+}
+
+void llaisysLinear(llaisysTensor_t output, llaisysTensor_t input, llaisysTensor_t weight, llaisysTensor_t bias) {
+    llaisys::ops::linear(tensorOf(output), tensorOf(input), tensorOf(weight), tensorOf(bias));
+}
+
+void llaisysRearrange(llaisysTensor_t output, llaisysTensor_t input) {
+    llaisys::ops::rearrange(tensorOf(output), tensorOf(input));
+}
+
+void llaisysRmsNorm(llaisysTensor_t output, llaisysTensor_t input, llaisysTensor_t weight, float epsilon) {
+    llaisys::ops::rms_norm(tensorOf(output), tensorOf(input), tensorOf(weight), epsilon);
+}
+
+void llaisysROPE(llaisysTensor_t output, llaisysTensor_t input, llaisysTensor_t positions, float theta) {
+    llaisys::ops::rope(tensorOf(output), tensorOf(input), tensorOf(positions), theta);
+}
+
+void llaisysSelfAttention(llaisysTensor_t output, llaisysTensor_t query, llaisysTensor_t key, llaisysTensor_t value, float scale) {
+    llaisys::ops::self_attention(tensorOf(output), tensorOf(query), tensorOf(key), tensorOf(value), scale);
+}
+
+void llaisysSwiGLU(llaisysTensor_t output, llaisysTensor_t gate, llaisysTensor_t up) {
+    llaisys::ops::swiglu(tensorOf(output), tensorOf(gate), tensorOf(up));
+}
+
 }

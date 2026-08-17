@@ -15,7 +15,7 @@
         std::cerr << "[ERROR] Unsupported data type: "    \
                   << llaisys::utils::dtype_to_str(DT__)   \
                   << EXCEPTION_LOCATION_MSG << std::endl; \
-        throw std::runtime_error("Unsupported device");   \
+        throw std::runtime_error("Unsupported data type"); \
     } while (0)
 
 #define CHECK_ARGUMENT(condition, message)                                                 \

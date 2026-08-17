@@ -1,5 +1,6 @@
 name: Build and test
 on:
+  workflow_dispatch:
   pull_request:
   push:
     paths-ignore:
@@ -12,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-2022, ubuntu-latest]
         type: [release]
     runs-on: ${{ matrix.os }}
     steps:

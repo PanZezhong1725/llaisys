@@ -1,43 +1,46 @@
-import os
-import sys
 import ctypes
+import sys
 from pathlib import Path
 
-from .runtime import load_runtime
-from .runtime import LlaisysRuntimeAPI
-from .llaisys_types import llaisysDeviceType_t, DeviceType
-from .llaisys_types import llaisysDataType_t, DataType
-from .llaisys_types import llaisysMemcpyKind_t, MemcpyKind
-from .llaisys_types import llaisysStream_t
-from .tensor import llaisysTensor_t
-from .tensor import load_tensor
+from .llaisys_types import (
+    DataType,
+    DeviceType,
+    MemcpyKind,
+    llaisysDataType_t,
+    llaisysDeviceType_t,
+    llaisysMemcpyKind_t,
+    llaisysStream_t,
+)
 from .ops import load_ops
+from .qwen2 import LlaisysQwen2Meta, LlaisysQwen2Weights, llaisysQwen2Model_t, load_qwen2
+from .runtime import LlaisysRuntimeAPI, load_runtime
+from .tensor import llaisysTensor_t, load_tensor
 
 
-def load_shared_library():
-    lib_dir = Path(__file__).parent
-
+def _library_candidates():
     if sys.platform.startswith("linux"):
-        libname = "libllaisys.so"
-    elif sys.platform == "win32":
-        libname = "llaisys.dll"
-    elif sys.platform == "darwin":
-        libname = "llaisys.dylib"
-    else:
-        raise RuntimeError("Unsupported platform")
-
-    lib_path = os.path.join(lib_dir, libname)
-
-    if not os.path.isfile(lib_path):
-        raise FileNotFoundError(f"Shared library not found: {lib_path}")
-
-    return ctypes.CDLL(str(lib_path))
+        return ("libllaisys.so",)
+    if sys.platform == "darwin":
+        return ("libllaisys.dylib",)
+    if sys.platform == "win32":
+        # MSVC and MinGW use different default prefixes.
+        return ("llaisys.dll", "libllaisys.dll")
+    raise RuntimeError(f"Unsupported host platform: {sys.platform}")
 
 
-LIB_LLAISYS = load_shared_library()
-load_runtime(LIB_LLAISYS)
-load_tensor(LIB_LLAISYS)
-load_ops(LIB_LLAISYS)
+def _open_library():
+    directory = Path(__file__).resolve().parent
+    for filename in _library_candidates():
+        candidate = directory / filename
+        if candidate.is_file():
+            return ctypes.CDLL(str(candidate))
+    expected = ", ".join(_library_candidates())
+    raise FileNotFoundError(f"Shared library not found in {directory}; expected {expected}")
+
+
+LIB_LLAISYS = _open_library()
+for loader in (load_runtime, load_tensor, load_ops, load_qwen2):
+    loader(LIB_LLAISYS)
 
 
 __all__ = [
@@ -51,5 +54,8 @@ __all__ = [
     "DeviceType",
     "llaisysMemcpyKind_t",
     "MemcpyKind",
-    "llaisysStream_t",
+    "LlaisysQwen2Meta",
+    "LlaisysQwen2Weights",
+    "llaisysQwen2Model_t",
+    "load_qwen2",
 ]

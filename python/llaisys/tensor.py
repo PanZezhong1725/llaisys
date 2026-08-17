@@ -32,6 +32,8 @@ class Tensor:
                 llaisysDeviceType_t(device),
                 c_int(device_id),
             )
+            if not self._tensor:
+                raise ValueError("Failed to create tensor; check shape, dtype, and device.")
 
     def __del__(self):
         if hasattr(self, "_tensor") and self._tensor is not None:
@@ -70,7 +72,10 @@ class Tensor:
         LIB_LLAISYS.tensorDebug(self._tensor)
 
     def __repr__(self):
-        return f"<Tensor shape={self.shape}, dtype={self.dtype}, device={self.device_type}:{self.device_id}>"
+        return (
+            f"<Tensor shape={self.shape()}, dtype={self.dtype()}, "
+            f"device={self.device_type()}:{self.device_id()}>"
+        )
 
     def load(self, data: c_void_p):
         LIB_LLAISYS.tensorLoad(self._tensor, data)
@@ -80,18 +85,26 @@ class Tensor:
 
     def view(self, *shape: int) -> llaisysTensor_t:
         _shape = (c_size_t * len(shape))(*shape)
-        return Tensor(
-            tensor=LIB_LLAISYS.tensorView(self._tensor, _shape, c_size_t(len(shape)))
+        tensor = LIB_LLAISYS.tensorView(
+            self._tensor, _shape, c_size_t(len(shape))
         )
+        if not tensor:
+            raise ValueError("Requested view is incompatible with the tensor strides.")
+        return Tensor(tensor=tensor)
 
     def permute(self, *perm: int) -> llaisysTensor_t:
-        assert len(perm) == self.ndim()
+        if len(perm) != self.ndim():
+            raise ValueError("Permutation rank must match tensor rank.")
         _perm = (c_size_t * len(perm))(*perm)
-        return Tensor(tensor=LIB_LLAISYS.tensorPermute(self._tensor, _perm))
+        tensor = LIB_LLAISYS.tensorPermute(self._tensor, _perm)
+        if not tensor:
+            raise ValueError("Invalid tensor permutation.")
+        return Tensor(tensor=tensor)
 
     def slice(self, dim: int, start: int, end: int):
-        return Tensor(
-            tensor=LIB_LLAISYS.tensorSlice(
-                self._tensor, c_size_t(dim), c_size_t(start), c_size_t(end)
-            )
+        tensor = LIB_LLAISYS.tensorSlice(
+            self._tensor, c_size_t(dim), c_size_t(start), c_size_t(end)
         )
+        if not tensor:
+            raise ValueError("Invalid tensor slice.")
+        return Tensor(tensor=tensor)

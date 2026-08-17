@@ -1,55 +1,48 @@
+from ctypes import c_float
+
 from .libllaisys import LIB_LLAISYS
 from .tensor import Tensor
-from ctypes import c_float, c_int
+
+
+def _handle(tensor):
+    return None if tensor is None else tensor.lib_tensor()
 
 
 class Ops:
     @staticmethod
-    def add(c: Tensor, a: Tensor, b: Tensor):
-        LIB_LLAISYS.llaisysAdd(c.lib_tensor(), a.lib_tensor(), b.lib_tensor())
+    def add(output: Tensor, left: Tensor, right: Tensor) -> None:
+        LIB_LLAISYS.llaisysAdd(_handle(output), _handle(left), _handle(right))
 
     @staticmethod
-    def argmax(max_idx: Tensor, max_val: Tensor, vals: Tensor):
-        LIB_LLAISYS.llaisysArgmax(max_idx.lib_tensor(), max_val.lib_tensor(), vals.lib_tensor())
+    def argmax(index: Tensor, value: Tensor, input_: Tensor) -> None:
+        LIB_LLAISYS.llaisysArgmax(_handle(index), _handle(value), _handle(input_))
 
     @staticmethod
-    def embedding(out: Tensor, index: Tensor, weight: Tensor):
-        LIB_LLAISYS.llaisysEmbedding(
-            out.lib_tensor(), index.lib_tensor(), weight.lib_tensor()
-        )
+    def embedding(output: Tensor, indices: Tensor, table: Tensor) -> None:
+        LIB_LLAISYS.llaisysEmbedding(_handle(output), _handle(indices), _handle(table))
 
     @staticmethod
-    def linear(out: Tensor, inp: Tensor, weight: Tensor, bias: Tensor):
-        LIB_LLAISYS.llaisysLinear(
-            out.lib_tensor(), inp.lib_tensor(), weight.lib_tensor(), bias.lib_tensor()
-        )
+    def linear(output: Tensor, input_: Tensor, weight: Tensor, bias: Tensor = None) -> None:
+        LIB_LLAISYS.llaisysLinear(_handle(output), _handle(input_), _handle(weight), _handle(bias))
 
     @staticmethod
-    def rearrange(out: Tensor, inp: Tensor):
-        LIB_LLAISYS.llaisysRearrange(out.lib_tensor(), inp.lib_tensor())
+    def rearrange(output: Tensor, input_: Tensor) -> None:
+        LIB_LLAISYS.llaisysRearrange(_handle(output), _handle(input_))
 
     @staticmethod
-    def rms_norm(out: Tensor, inp: Tensor, weight: Tensor, eps: float):
-        LIB_LLAISYS.llaisysRmsNorm(
-            out.lib_tensor(), inp.lib_tensor(), weight.lib_tensor(), c_float(eps)
-        )
+    def rms_norm(output: Tensor, input_: Tensor, weight: Tensor, epsilon: float) -> None:
+        LIB_LLAISYS.llaisysRmsNorm(_handle(output), _handle(input_), _handle(weight), c_float(epsilon))
 
     @staticmethod
-    def rope(out: Tensor, inp: Tensor, pos_ids: Tensor, theta: float):
-        LIB_LLAISYS.llaisysROPE(
-            out.lib_tensor(), inp.lib_tensor(), pos_ids.lib_tensor(), c_float(theta)
-        )
+    def rope(output: Tensor, input_: Tensor, positions: Tensor, theta: float) -> None:
+        LIB_LLAISYS.llaisysROPE(_handle(output), _handle(input_), _handle(positions), c_float(theta))
 
     @staticmethod
-    def self_attention(attn_val: Tensor, q: Tensor, k: Tensor, v: Tensor, scale: float):
+    def self_attention(output: Tensor, query: Tensor, key: Tensor, value: Tensor, scale: float) -> None:
         LIB_LLAISYS.llaisysSelfAttention(
-            attn_val.lib_tensor(),
-            q.lib_tensor(),
-            k.lib_tensor(),
-            v.lib_tensor(),
-            c_float(scale),
+            _handle(output), _handle(query), _handle(key), _handle(value), c_float(scale)
         )
 
     @staticmethod
-    def swiglu(out: Tensor, gate: Tensor, up: Tensor):
-        LIB_LLAISYS.llaisysSwiGLU(out.lib_tensor(), gate.lib_tensor(), up.lib_tensor())
+    def swiglu(output: Tensor, gate: Tensor, up: Tensor) -> None:
+        LIB_LLAISYS.llaisysSwiGLU(_handle(output), _handle(gate), _handle(up))

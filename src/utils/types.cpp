@@ -38,29 +38,71 @@ float _f16_to_f32(fp16_t val) {
 }
 
 fp16_t _f32_to_f16(float val) {
-    uint32_t f32;
-    memcpy(&f32, &val, sizeof(f32));               // Read the bits of the float32
-    uint16_t sign = (f32 >> 16) & 0x8000;          // Extract the sign bit
-    int32_t exponent = ((f32 >> 23) & 0xFF) - 127; // Extract and de-bias the exponent
-    uint32_t mantissa = f32 & 0x7FFFFF;            // Extract the mantissa (fraction part)
+    uint32_t bits;
+    std::memcpy(&bits, &val, sizeof(bits));
 
-    if (exponent >= 16) { // Special cases for Inf and NaN
-        // NaN
-        if (exponent == 128 && mantissa != 0) {
-            return fp16_t{static_cast<uint16_t>(sign | 0x7E00)};
+    const uint16_t sign = static_cast<uint16_t>((bits >> 16) & 0x8000u);
+    const uint32_t exponent_bits = (bits >> 23) & 0xffu;
+    const uint32_t mantissa = bits & 0x7fffffu;
+
+    // Preserve infinities and emit a quiet half-precision NaN. Keeping at
+    // least one payload bit prevents a float32 NaN with a tiny payload from
+    // being truncated into infinity.
+    if (exponent_bits == 0xffu) {
+        if (mantissa == 0) {
+            return fp16_t{static_cast<uint16_t>(sign | 0x7c00u)};
         }
-        // Infinity
-        return fp16_t{static_cast<uint16_t>(sign | 0x7C00)};
-    } else if (exponent >= -14) { // Normalized case
-        return fp16_t{(uint16_t)(sign | ((exponent + 15) << 10) | (mantissa >> 13))};
-    } else if (exponent >= -24) {
-        mantissa |= 0x800000; // Add implicit leading 1
-        mantissa >>= (-14 - exponent);
-        return fp16_t{(uint16_t)(sign | (mantissa >> 13))};
-    } else {
-        // Too small for subnormal: return signed zero
-        return fp16_t{(uint16_t)sign};
+        uint16_t payload = static_cast<uint16_t>(mantissa >> 13);
+        payload = static_cast<uint16_t>((payload | 0x0200u) & 0x03ffu);
+        return fp16_t{static_cast<uint16_t>(sign | 0x7c00u | payload)};
     }
+
+    // Float32 subnormals are far below the representable half range.
+    if (exponent_bits == 0) {
+        return fp16_t{sign};
+    }
+
+    const int32_t exponent = static_cast<int32_t>(exponent_bits) - 127;
+    if (exponent > 15) {
+        return fp16_t{static_cast<uint16_t>(sign | 0x7c00u)};
+    }
+
+    if (exponent >= -14) {
+        uint32_t rounded = mantissa;
+        // Round the discarded 13 bits to nearest, ties to even.
+        rounded += 0x0fffu + ((rounded >> 13) & 1u);
+        uint32_t half_exponent = static_cast<uint32_t>(exponent + 15);
+        if ((rounded & 0x800000u) != 0) {
+            rounded = 0;
+            ++half_exponent;
+            if (half_exponent >= 31) {
+                return fp16_t{static_cast<uint16_t>(sign | 0x7c00u)};
+            }
+        }
+        return fp16_t{static_cast<uint16_t>(
+            sign | (half_exponent << 10) | ((rounded >> 13) & 0x03ffu))};
+    }
+
+    if (exponent < -25) {
+        return fp16_t{sign};
+    }
+
+    // Half subnormal. The implicit float32 leading one participates in the
+    // rounding; exponent == -25 is the exact zero/min-subnormal tie case.
+    const uint32_t significand = mantissa | 0x800000u;
+    const uint32_t shift = static_cast<uint32_t>(-exponent - 1);
+    uint32_t half_mantissa = significand >> shift;
+    const uint32_t remainder_mask = (uint32_t{1} << shift) - 1u;
+    const uint32_t remainder = significand & remainder_mask;
+    const uint32_t halfway = uint32_t{1} << (shift - 1);
+    if (remainder > halfway
+        || (remainder == halfway && (half_mantissa & 1u) != 0)) {
+        ++half_mantissa;
+    }
+
+    // A rounded subnormal may naturally carry into the minimum normal value
+    // (0x0400), so do not mask the result down to ten bits here.
+    return fp16_t{static_cast<uint16_t>(sign | half_mantissa)};
 }
 
 float _bf16_to_f32(bf16_t val) {

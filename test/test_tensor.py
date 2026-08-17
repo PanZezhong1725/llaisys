@@ -49,7 +49,56 @@ def test_tensor():
     assert check_equal(llaisys_tensor_slice, torch_tensor_slice)
 
 
+def test_stride_compatible_view():
+    """A view may reshape within stride-compatible storage chunks."""
+    torch_base = torch.arange(60, dtype=torch_dtype("i64")).reshape(2, 3, 10)
+    llaisys_base = llaisys.Tensor(
+        (2, 3, 10), dtype=llaisys_dtype("i64"), device=llaisys_device("cpu")
+    )
+    llaisys_base.load(torch_base.data_ptr())
+
+    # The slice has shape (2, 3, 5), strides (30, 10, 1), and gaps between
+    # rows. Its outer two dimensions form one chunk, while the final dimension
+    # is a separate contiguous chunk.
+    torch_slice = torch_base[:, :, :5]
+    llaisys_slice = llaisys_base.slice(2, 0, 5)
+    assert llaisys_slice.shape() == torch_slice.shape
+    assert llaisys_slice.strides() == torch_slice.stride()
+
+    torch_view = torch_slice.view(6, 5)
+    llaisys_view = llaisys_slice.view(6, 5)
+    assert llaisys_view.strides() == torch_view.stride()
+    assert check_equal(llaisys_view, torch_view)
+
+    # Merging across the storage gap would require moving data, so view must
+    # reject it. reshape/contiguous are the copying alternatives in C++.
+    try:
+        llaisys_slice.view(2, 15)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Incompatible non-contiguous view was accepted")
+
+
+def test_scalar_and_empty_tensor_metadata():
+    scalar = llaisys.Tensor(
+        (), dtype=llaisys_dtype("f32"), device=llaisys_device("cpu")
+    )
+    assert scalar.shape() == ()
+    assert scalar.strides() == ()
+    assert scalar.is_contiguous()
+
+    empty = llaisys.Tensor(
+        (2, 0, 3), dtype=llaisys_dtype("f32"), device=llaisys_device("cpu")
+    )
+    assert empty.shape() == (2, 0, 3)
+    assert empty.is_contiguous()
+    assert empty.view(0, 6).shape() == (0, 6)
+
+
 if __name__ == "__main__":
     test_tensor()
+    test_stride_compatible_view()
+    test_scalar_and_empty_tensor_metadata()
 
     print("\n\033[92mTest passed!\033[0m\n")
