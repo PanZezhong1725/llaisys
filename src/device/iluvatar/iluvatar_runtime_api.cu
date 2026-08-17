@@ -27,7 +27,7 @@ cudaMemcpyKind to_cuda_kind(llaisysMemcpyKind_t kind) {
 }
 } // namespace
 
-namespace llaisys::device::nvidia {
+namespace llaisys::device::iluvatar {
 namespace runtime_api {
 int getDeviceCount() {
     int count = 0;
@@ -91,22 +91,12 @@ void memcpyAsync(void *dst, const void *src, size_t size, llaisysMemcpyKind_t ki
     check_cuda(cudaMemcpyAsync(dst, src, size, to_cuda_kind(kind), reinterpret_cast<cudaStream_t>(stream)));
 }
 
-static const LlaisysRuntimeAPI RUNTIME_API = {
-    &getDeviceCount,
-    &setDevice,
-    &deviceSynchronize,
-    &createStream,
-    &destroyStream,
-    &streamSynchronize,
-    &mallocDevice,
-    &freeDevice,
-    &mallocHost,
-    &freeHost,
-    &memcpySync,
-    &memcpyAsync};
+const LlaisysRuntimeAPI RUNTIME_API = {
+    &getDeviceCount, &setDevice, &deviceSynchronize, &createStream, &destroyStream, &streamSynchronize,
+    &mallocDevice, &freeDevice, &mallocHost, &freeHost, &memcpySync, &memcpyAsync};
 } // namespace runtime_api
 
 const LlaisysRuntimeAPI *getRuntimeAPI() {
     return &runtime_api::RUNTIME_API;
 }
-} // namespace llaisys::device::nvidia
+} // namespace llaisys::device::iluvatar

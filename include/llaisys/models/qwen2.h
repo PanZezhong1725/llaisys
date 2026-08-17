@@ -37,6 +37,18 @@ __C {
 
     __export struct LlaisysQwen2Weights *llaisysQwen2ModelWeights(struct LlaisysQwen2Model * model);
 
+    // Load one safetensors entry into the model.  The bytes are copied before
+    // this function returns, so the caller owns the input buffer.
+    __export void llaisysQwen2ModelLoadWeight(
+        struct LlaisysQwen2Model *model,
+        const char *name,
+        const void *data,
+        const size_t *shape,
+        size_t ndim,
+        llaisysDataType_t dtype);
+
     __export int64_t llaisysQwen2ModelInfer(struct LlaisysQwen2Model * model, int64_t * token_ids, size_t ntoken);
+
+    __export void llaisysQwen2ModelReset(struct LlaisysQwen2Model * model);
 }
 #endif // LLAISYS_MODELS_QWEN2_H

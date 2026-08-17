@@ -15,7 +15,7 @@ def torch_self_attention(attn_val, query, key, value, scale):
     L, S = query.size(-2), key.size(-2)
     attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
 
-    temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=S-L)
+    temp_mask = torch.ones(L, S, dtype=torch.bool, device=query.device).tril(diagonal=S-L)
     attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
     attn_bias.to(query.dtype)
 
@@ -61,6 +61,27 @@ def test_op_self_attention(
         )
 
 
+def test_masked_scores_do_not_affect_softmax(
+    dtype_name="f32",
+    atol=1e-5,
+    rtol=1e-5,
+    device_name="cpu",
+):
+    """Masked zero-filled score slots must not enter the softmax maximum."""
+    shape = (2, 1, 4)
+    q, q_ = random_tensor(shape, dtype_name, device_name, scale=0, bias=-100)
+    k, k_ = random_tensor(shape, dtype_name, device_name, scale=0, bias=1)
+    v, v_ = random_tensor(shape, dtype_name, device_name)
+    attn_val, attn_val_ = random_tensor(shape, dtype_name, device_name)
+    scale = 1.0 / (shape[-1] ** 0.5)
+
+    torch_self_attention(attn_val, q, k, v, scale)
+    llaisys.Ops.self_attention(attn_val_, q_, k_, v_, scale)
+
+    assert torch.isfinite(attn_val).all()
+    assert check_equal(attn_val_, attn_val, atol=atol, rtol=rtol)
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -85,5 +106,9 @@ if __name__ == "__main__":
             test_op_self_attention(
                 *shape, dtype_name, atol, rtol, args.device, args.profile
             )
+    for dtype_name, atol, rtol in testDtypePrec:
+        test_masked_scores_do_not_affect_softmax(
+            dtype_name, atol, rtol, args.device
+        )
 
     print("\033[92mTest passed!\033[0m\n")
