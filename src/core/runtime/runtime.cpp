@@ -7,8 +7,10 @@ namespace llaisys::core {
 Runtime::Runtime(llaisysDeviceType_t device_type, int device_id)
     : _device_type(device_type), _device_id(device_id), _is_active(false) {
     _api = llaisys::device::getRuntimeAPI(_device_type);
+    _resource = llaisys::device::getDeviceResource(_device_type, _device_id);
     _stream = _api->create_stream();
     _allocator = new allocators::NaiveAllocator(_api);
+
 }
 
 Runtime::~Runtime() {
@@ -19,6 +21,8 @@ Runtime::~Runtime() {
     _allocator = nullptr;
     _api->destroy_stream(_stream);
     _api = nullptr;
+    delete _resource;
+    _resource = nullptr;
 }
 
 void Runtime::_activate() {
@@ -70,4 +74,7 @@ void Runtime::synchronize() const {
     _api->stream_synchronize(_stream);
 }
 
+llaisys::device::DeviceResource* Runtime::resource() const{
+    return _resource;
+}
 } // namespace llaisys::core
