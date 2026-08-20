@@ -1,0 +1,256 @@
+#include "self_attention_metax.hpp"
+
+#include "../../../device/metax/metax_dtype.hpp"
+#include "../../../device/metax/metax_utils.hpp"
+
+#include <mc_runtime.h>
+
+#include <cfloat>
+#include <cmath>
+#include <stdexcept>
+
+#include "../../../utils/check.hpp"
+
+namespace llaisys::ops::metax {
+
+namespace {
+
+using llaisys::device::metax::to_float;
+using llaisys::device::metax::from_float;
+
+
+/*
+    一个 block = 一个 (query_idx, q_head)
+
+    thread 0:
+        依次计算每个 key 的 q·k score
+
+    整个 block:
+        在线更新 softmax
+        同时累加 weighted V
+
+    最终:
+        out = accumulator / softmax_sum
+*/
+template <typename T>
+__global__ void self_attention_kernel(
+    T *attn_val,
+    const T *q,
+    const T *k,
+    const T *v,
+    float scale,
+    size_t q_len,
+    size_t total_len,
+    size_t q_heads,
+    size_t kv_heads,
+    size_t qk_dim,
+    size_t v_dim
+) {
+    /*
+     * 一个 block 对应：(query_idx, q_head)
+     */
+    const size_t idx = static_cast<size_t>(blockIdx.x);
+
+    const size_t q_head = idx % q_heads;
+    const size_t query_idx = idx / q_heads;
+
+    if (query_idx >= q_len) {
+        return;
+    }
+
+    /*
+     * Qwen2 GQA:
+     *
+     * q_heads = 12
+     * kv_heads = 2
+     *
+     * group_size = 6
+     *
+     * q head:
+     * 0 1 2 3 4 5 -> kv head 0
+     * 6 7 8 9 10 11 -> kv head 1
+     */
+    const size_t group_size = q_heads / kv_heads;   // 每个 KV head 所对应的 Query head 的数量
+    const size_t kv_head = q_head / group_size;     // 当前 q_head 对应的 kv_head
+
+    const size_t past_len = total_len - q_len;
+    const size_t allowed_keys = past_len + query_idx + 1;   // causal mask 当前 query_idx 能看到：[0, past_len + query_idx]
+
+    const size_t q_base =( query_idx * q_heads + q_head) * qk_dim;
+    const size_t out_base =(query_idx * q_heads + q_head) * v_dim;
+
+    /*
+     * Online softmax 公共状态
+     *  thread 0 更新，整个 block 使用
+     */
+    __shared__ float m;     // 当前最大 score
+    __shared__ float l;     // exp sum
+    __shared__ float alpha; // 动态修正分母的因子
+    __shared__ float beta;  // 新元素的贡献
+
+
+    if (threadIdx.x == 0) {
+        m = -FLT_MAX;
+        l = 0.0f;
+    }
+
+    __syncthreads();
+
+    /*
+     * 每个 thread 负责一个或多个 v_dim。
+     *
+     * Qwen head_dim <= block size，所以一个 thread 一个 accumulator
+     */
+    const size_t d = threadIdx.x;
+    float acc = 0.0f;
+
+
+    for (size_t key_idx = 0; key_idx < allowed_keys; ++key_idx) {
+        // thread 0 顺序计算 q·k
+        // TODO : 后面性能优化时再做 parallel reduction
+        if (threadIdx.x == 0) {
+            const size_t k_base =(key_idx * kv_heads + kv_head) * qk_dim;
+            float dot = 0.0f;
+
+            for (size_t i = 0; i < qk_dim; ++i) {
+                const float qv = to_float<T>(q[q_base + i]);
+                const float kv = to_float<T>(k[k_base + i]);
+                dot += qv * kv;
+            }
+
+            const float score = dot * scale;
+
+            // 稳定 online softmax
+            const float new_m = fmaxf(m, score);
+            alpha = expf(m - new_m);
+            beta = expf(score - new_m);
+            l = l * alpha + beta;   // 更新分母
+            m = new_m;              // 更新全局最大值
+        }
+
+        // 等 thread 0 把 alpha/beta 算好
+        __syncthreads();
+
+        // 所有线程更新自己的累加器 acc
+        if (d < v_dim) {
+            const size_t v_idx = (key_idx * kv_heads + kv_head) * v_dim + d;
+            float value = to_float<T>(v[v_idx]);
+            acc = acc * alpha + beta * value;
+        }
+
+        // 下一轮 thread 0 会更新 alpha/beta，必须等所有线程完成本轮使用。
+        __syncthreads();
+    }
+
+    if (d < v_dim) {
+        attn_val[out_base + d] = from_float<T>(acc / l);
+    }
+}
+
+} // namespce
+
+
+void self_attention(
+    std::byte *attn_val,
+    const std::byte *q,
+    const std::byte *k,
+    const std::byte *v,
+    llaisysDataType_t dtype,
+    float scale,
+    size_t q_len,
+    size_t total_len,
+    size_t q_heads,
+    size_t kv_heads,
+    size_t qk_dim,
+    size_t v_dim,
+    llaisysStream_t stream_
+) {
+    /*
+     * 当前 correctness kernel：
+     *
+     * 一个 thread 对应一个 v dimension。
+     */
+    constexpr int BLOCK_SIZE = 256;
+
+    CHECK_ARGUMENT(
+        v_dim <= BLOCK_SIZE,
+        "METAX self_attention: "
+        "v_dim > 256 is not supported yet."
+    );
+
+    const size_t num_blocks = q_len * q_heads;
+
+    if (num_blocks == 0) {
+        return;
+    }
+
+    const mcStream_t stream = reinterpret_cast<mcStream_t>(stream_);
+
+
+    switch (dtype) {
+    case LLAISYS_DTYPE_F32:
+        self_attention_kernel<float>
+            <<<num_blocks,
+               BLOCK_SIZE,
+               0,
+               stream>>>(
+                reinterpret_cast<float *>(attn_val),
+                reinterpret_cast<const float *>(q),
+                reinterpret_cast<const float *>(k),
+                reinterpret_cast<const float *>(v),
+                scale,
+                q_len,
+                total_len,
+                q_heads,
+                kv_heads,
+                qk_dim,
+                v_dim
+            );
+        break;
+    case LLAISYS_DTYPE_F16:
+        self_attention_kernel<::llaisys::device::metax::fp16_t>
+            <<<num_blocks,
+               BLOCK_SIZE,
+               0,
+               stream>>>(
+                reinterpret_cast< ::llaisys::device::metax::fp16_t *>(attn_val),
+                reinterpret_cast<const ::llaisys::device::metax::fp16_t *>(q),
+                reinterpret_cast<const ::llaisys::device::metax::fp16_t *>(k),
+                reinterpret_cast<const ::llaisys::device::metax::fp16_t *>(v),
+                scale,
+                q_len,
+                total_len,
+                q_heads,
+                kv_heads,
+                qk_dim,
+                v_dim
+            );
+        break;
+    case LLAISYS_DTYPE_BF16:
+        self_attention_kernel<::llaisys::device::metax::bf16_t>
+            <<<num_blocks,
+               BLOCK_SIZE,
+               0,
+               stream>>>(
+                reinterpret_cast<::llaisys::device::metax::bf16_t *>(attn_val),
+                reinterpret_cast<const ::llaisys::device::metax::bf16_t *>(q),
+                reinterpret_cast<const ::llaisys::device::metax::bf16_t *>(k),
+                reinterpret_cast<const ::llaisys::device::metax::bf16_t *>(v),
+                scale,
+                q_len,
+                total_len,
+                q_heads,
+                kv_heads,
+                qk_dim,
+                v_dim
+            );
+        break;
+    default:
+        throw std::runtime_error(
+            "Unsupported datatype in METAX self_attention"
+        );
+    }
+    METAX_KERNEL_CHECK();
+}
+
+} // namespce llaisys::ops::metax

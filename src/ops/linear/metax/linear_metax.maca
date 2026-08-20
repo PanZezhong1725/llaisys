@@ -1,0 +1,114 @@
+#include "linear_metax.hpp"
+
+#include "../../../device/metax/metax_dtype.hpp"
+#include "../../../device/metax/metax_utils.hpp"
+
+#include <mc_runtime.h>
+
+#include <stdexcept>
+
+namespace llaisys::ops::metax {
+
+namespace {
+
+using llaisys::device::metax::bf16_t;
+using llaisys::device::metax::fp16_t;
+using llaisys::device::metax::from_float;
+using llaisys::device::metax::to_float;
+
+template <typename T>
+__global__ void linear_kernel(
+    T *out,
+    const T *in,
+    const T *weight,
+    const T *bias,
+    size_t m,
+    size_t n,
+    size_t k
+) {
+    const size_t output_index =
+        static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const size_t output_size = m * n;
+    if (output_index >= output_size) {
+        return;
+    }
+
+    const size_t row = output_index / n;
+    const size_t column = output_index % n;
+    float value = 0.0f;
+    for (size_t inner = 0; inner < k; ++inner) {
+        value += to_float(in[row * k + inner])
+            * to_float(weight[column * k + inner]);
+    }
+    if (bias != nullptr) {
+        value += to_float(bias[column]);
+    }
+    out[output_index] = from_float<T>(value);
+}
+
+template <typename T>
+void launch(
+    std::byte *out,
+    const std::byte *in,
+    const std::byte *weight,
+    const std::byte *bias,
+    size_t m,
+    size_t n,
+    size_t k,
+    int grid_size,
+    int block_size,
+    mcStream_t stream
+) {
+    linear_kernel<T><<<grid_size, block_size, 0, stream>>>(
+        reinterpret_cast<T *>(out),
+        reinterpret_cast<const T *>(in),
+        reinterpret_cast<const T *>(weight),
+        reinterpret_cast<const T *>(bias),
+        m,
+        n,
+        k
+    );
+}
+
+} // namespace
+
+void linear(
+    std::byte *out,
+    const std::byte *in,
+    const std::byte *weight,
+    const std::byte *bias,
+    llaisysDataType_t dtype,
+    size_t m,
+    size_t n,
+    size_t k,
+    llaisysStream_t stream_
+) {
+    const size_t output_size = m * n;
+    if (output_size == 0) {
+        return;
+    }
+
+    constexpr int BLOCK_SIZE = 256;
+    const int grid_size = static_cast<int>(
+        (output_size + BLOCK_SIZE - 1) / BLOCK_SIZE
+    );
+    const mcStream_t stream = reinterpret_cast<mcStream_t>(stream_);
+
+    switch (dtype) {
+    case LLAISYS_DTYPE_F32:
+        launch<float>(out, in, weight, bias, m, n, k, grid_size, BLOCK_SIZE, stream);
+        break;
+    case LLAISYS_DTYPE_F16:
+        launch<fp16_t>(out, in, weight, bias, m, n, k, grid_size, BLOCK_SIZE, stream);
+        break;
+    case LLAISYS_DTYPE_BF16:
+        launch<bf16_t>(out, in, weight, bias, m, n, k, grid_size, BLOCK_SIZE, stream);
+        break;
+    default:
+        throw std::runtime_error("Unsupported datatype in MetaX linear");
+    }
+
+    METAX_KERNEL_CHECK();
+}
+
+} // namespace llaisys::ops::metax

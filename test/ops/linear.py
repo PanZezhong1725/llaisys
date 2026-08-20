@@ -49,11 +49,12 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default="cpu", choices=["cpu", "nvidia"], type=str)
+    parser.add_argument("--device", default="cpu", choices=["cpu", "nvidia", "iluvatar", "metax"], type=str)
     parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
     testShapes = [
         ((2, 3), (2, 4), (3, 4), True),
+        ((2, 3), (2, 4), (3, 4), False),
         ((512, 4096), (512, 4096), (4096, 4096), True),
     ]
     testDtypePrec = [

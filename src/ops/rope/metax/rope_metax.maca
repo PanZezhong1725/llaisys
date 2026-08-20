@@ -1,0 +1,138 @@
+#include "rope_metax.hpp"
+
+#include "../../../device/metax/metax_dtype.hpp"
+#include "../../../device/metax/metax_utils.hpp"
+
+#include <mc_runtime.h>
+
+#include <cmath>
+#include <cstdint>
+#include <stdexcept>
+
+namespace llaisys::ops::metax {
+
+namespace {
+
+using llaisys::device::metax::bf16_t;
+using llaisys::device::metax::fp16_t;
+using llaisys::device::metax::from_float;
+using llaisys::device::metax::to_float;
+
+template <typename T>
+__global__ void rope_kernel(
+    T *out,
+    const T *in,
+    const std::int64_t *pos_ids,
+    float theta,
+    size_t n_heads,
+    size_t head_dim,
+    size_t total_pairs
+) {
+    const size_t index =
+        static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (index >= total_pairs) {
+        return;
+    }
+
+    const size_t half_dim = head_dim / 2;
+    const size_t pair = index % half_dim;
+    const size_t head_and_seq = index / half_dim;
+    const size_t head = head_and_seq % n_heads;
+    const size_t seq = head_and_seq / n_heads;
+    const std::int64_t position = pos_ids[seq];
+    if (position < 0) {
+        return;
+    }
+
+    const float exponent =
+        2.0f * static_cast<float>(pair) / static_cast<float>(head_dim);
+    const float angle = static_cast<float>(position) / powf(theta, exponent);
+    const float cosine = cosf(angle);
+    const float sine = sinf(angle);
+
+    const size_t base = (seq * n_heads + head) * head_dim;
+    const size_t first = base + pair;
+    const size_t second = base + half_dim + pair;
+    const float a = to_float<T>(in[first]);
+    const float b = to_float<T>(in[second]);
+
+    out[first] = from_float<T>(a * cosine - b * sine);
+    out[second] = from_float<T>(b * cosine + a * sine);
+}
+
+template <typename T>
+void launch(
+    std::byte *out,
+    const std::byte *in,
+    const std::int64_t *pos_ids,
+    float theta,
+    size_t n_heads,
+    size_t head_dim,
+    size_t total_pairs,
+    int grid_size,
+    int block_size,
+    mcStream_t stream
+) {
+    rope_kernel<T><<<grid_size, block_size, 0, stream>>>(
+        reinterpret_cast<T *>(out),
+        reinterpret_cast<const T *>(in),
+        pos_ids,
+        theta,
+        n_heads,
+        head_dim,
+        total_pairs
+    );
+}
+
+} // namespace
+
+void rope(
+    std::byte *out,
+    const std::byte *in,
+    const std::byte *pos_ids,
+    float theta,
+    llaisysDataType_t dtype,
+    size_t seq_len,
+    size_t n_heads,
+    size_t head_dim,
+    llaisysStream_t stream_
+) {
+    const size_t total_pairs = seq_len * n_heads * (head_dim / 2);
+    if (total_pairs == 0) {
+        return;
+    }
+
+    constexpr int BLOCK_SIZE = 256;
+    const int grid_size = static_cast<int>(
+        (total_pairs + BLOCK_SIZE - 1) / BLOCK_SIZE
+    );
+    const mcStream_t stream = reinterpret_cast<mcStream_t>(stream_);
+    const auto *positions = reinterpret_cast<const std::int64_t *>(pos_ids);
+
+    switch (dtype) {
+    case LLAISYS_DTYPE_F32:
+        launch<float>(
+            out, in, positions, theta, n_heads, head_dim,
+            total_pairs, grid_size, BLOCK_SIZE, stream
+        );
+        break;
+    case LLAISYS_DTYPE_F16:
+        launch<fp16_t>(
+            out, in, positions, theta, n_heads, head_dim,
+            total_pairs, grid_size, BLOCK_SIZE, stream
+        );
+        break;
+    case LLAISYS_DTYPE_BF16:
+        launch<bf16_t>(
+            out, in, positions, theta, n_heads, head_dim,
+            total_pairs, grid_size, BLOCK_SIZE, stream
+        );
+        break;
+    default:
+        throw std::runtime_error("Unsupported datatype in MetaX RoPE");
+    }
+
+    METAX_KERNEL_CHECK();
+}
+
+} // namespace llaisys::ops::metax

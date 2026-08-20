@@ -1,0 +1,107 @@
+#include "swiglu_metax.hpp"
+
+
+#include "../../../utils.hpp"
+#include "../../../device/metax/metax_dtype.hpp"
+#include "../../../device/metax/metax_utils.hpp"
+
+#include <mc_runtime.h>
+
+#include <cmath>
+
+namespace llaisys::ops::metax {
+
+namespace {
+
+using llaisys::device::metax::to_float;
+using llaisys::device::metax::from_float;
+
+template <typename T>
+__global__ void swiglu_kernel(
+    T *out,
+    const T *gate,
+    const T *up,
+    size_t numel
+) {
+    const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+
+    if (i >= numel) {
+        return;
+    }
+
+    const float g = to_float<T>(gate[i]);
+
+    const float u = to_float<T>(up[i]);
+
+    float silu;
+
+    if (g >= 0.0f) {
+        silu = g / (1.0f + expf(-g));
+    } else {
+        const float e = expf(g);
+        silu = g * e / (1.0f + e);
+    }
+
+    out[i] = from_float<T>(u * silu);
+}
+
+} // namespace
+
+void swiglu(
+    std::byte *out,
+    const std::byte *gate,
+    const std::byte *up,
+    llaisysDataType_t dtype,
+    size_t numel,
+    llaisysStream_t stream_
+) {
+    constexpr int BLOCK_SIZE = 256;
+
+    if (numel == 0) {
+        return;
+    }
+
+    const int grid_size = static_cast<int>((numel + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+    mcStream_t stream = reinterpret_cast<mcStream_t>(stream_);
+
+    switch (dtype) {
+
+    case LLAISYS_DTYPE_F32:
+        swiglu_kernel<float>
+            <<<grid_size, BLOCK_SIZE, 0, stream>>>(
+                reinterpret_cast<float *>(out),
+                reinterpret_cast<const float *>(gate),
+                reinterpret_cast<const float *>(up),
+                numel
+            );
+        break;
+
+    case LLAISYS_DTYPE_F16:
+        swiglu_kernel<::llaisys::device::metax::fp16_t>
+            <<<grid_size, BLOCK_SIZE, 0, stream>>>(
+                reinterpret_cast<::llaisys::device::metax::fp16_t *>(out),
+                reinterpret_cast<const ::llaisys::device::metax::fp16_t *>(gate),
+                reinterpret_cast<const ::llaisys::device::metax::fp16_t *>(up),
+                numel
+            );
+        break;
+
+    case LLAISYS_DTYPE_BF16:
+        swiglu_kernel<::llaisys::device::metax::bf16_t>
+            <<<grid_size, BLOCK_SIZE, 0, stream>>>(
+                reinterpret_cast<::llaisys::device::metax::bf16_t *>(out),
+                reinterpret_cast<const ::llaisys::device::metax::bf16_t *>(gate),
+                reinterpret_cast<const ::llaisys::device::metax::bf16_t *>(up),
+                numel
+            );
+        break;
+
+    default:
+        EXCEPTION_UNSUPPORTED_DATATYPE(dtype);
+    }
+
+    METAX_KERNEL_CHECK();
+}
+
+} // namespace llaisys::ops::metax

@@ -1,0 +1,121 @@
+#include "../runtime_api.hpp"
+#include "metax_utils.hpp"
+
+#include <mc_runtime.h>
+
+#include <cstdlib>
+#include <new>
+#include <stdexcept>
+
+namespace llaisys::device::metax {
+
+namespace {
+
+auto toMemcpyKind(llaisysMemcpyKind_t kind) {
+    switch (kind) {
+    case LLAISYS_MEMCPY_H2H:
+        return mcMemcpyHostToHost;
+    case LLAISYS_MEMCPY_H2D:
+        return mcMemcpyHostToDevice;
+    case LLAISYS_MEMCPY_D2H:
+        return mcMemcpyDeviceToHost;
+    case LLAISYS_MEMCPY_D2D:
+        return mcMemcpyDeviceToDevice;
+    default:
+        throw std::invalid_argument("Invalid memcpy kind");
+    }
+}
+
+int getDeviceCount() {
+    int count = 0;
+    METAX_CHECK(mcGetDeviceCount(&count));
+    return count;
+}
+
+void setDevice(int device) {
+    METAX_CHECK(mcSetDevice(device));
+}
+
+void deviceSynchronize() {
+    METAX_CHECK(mcDeviceSynchronize());
+}
+
+llaisysStream_t createStream() {
+    mcStream_t stream = nullptr;
+    METAX_CHECK(mcStreamCreate(&stream));
+    return reinterpret_cast<llaisysStream_t>(stream);
+}
+
+void destroyStream(llaisysStream_t stream) {
+    METAX_CHECK(mcStreamDestroy(reinterpret_cast<mcStream_t>(stream)));
+}
+
+void streamSynchronize(llaisysStream_t stream) {
+    METAX_CHECK(mcStreamSynchronize(reinterpret_cast<mcStream_t>(stream)));
+}
+
+void *mallocDevice(size_t size) {
+    void *ptr = nullptr;
+    METAX_CHECK(mcMalloc(&ptr, size));
+    return ptr;
+}
+
+void freeDevice(void *ptr) {
+    if (ptr != nullptr) {
+        METAX_CHECK(mcFree(ptr));
+    }
+}
+
+void *mallocHost(size_t size) {
+    void *ptr = std::malloc(size);
+    if (ptr == nullptr && size != 0) {
+        throw std::bad_alloc();
+    }
+    return ptr;
+}
+
+void freeHost(void *ptr) {
+    std::free(ptr);
+}
+
+void memcpySync(void *dst, const void *src, size_t size, llaisysMemcpyKind_t kind) {
+    METAX_CHECK(mcMemcpy(dst, src, size, toMemcpyKind(kind)));
+}
+
+void memcpyAsync(
+    void *dst,
+    const void *src,
+    size_t size,
+    llaisysMemcpyKind_t kind,
+    llaisysStream_t stream
+) {
+    METAX_CHECK(mcMemcpyAsync(
+        dst,
+        src,
+        size,
+        toMemcpyKind(kind),
+        reinterpret_cast<mcStream_t>(stream)
+    ));
+}
+
+const LlaisysRuntimeAPI RUNTIME_API = {
+    &getDeviceCount,
+    &setDevice,
+    &deviceSynchronize,
+    &createStream,
+    &destroyStream,
+    &streamSynchronize,
+    &mallocDevice,
+    &freeDevice,
+    &mallocHost,
+    &freeHost,
+    &memcpySync,
+    &memcpyAsync};
+
+} // namespace
+
+const LlaisysRuntimeAPI *getRuntimeAPI() {
+    return &RUNTIME_API;
+}
+
+} // namespace llaisys::device::metax

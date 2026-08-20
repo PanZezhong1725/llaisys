@@ -8,6 +8,13 @@ template <typename T>
 void add_(T *c, const T *a, const T *b, size_t numel) {
     for (size_t i = 0; i < numel; i++) {
         if constexpr (std::is_same_v<T, llaisys::bf16_t> || std::is_same_v<T, llaisys::fp16_t>) {
+            // fp16_t 和 bf16_t 本质上是只保存一个 uint16_t 的自定义结构
+            // 它们没有原生的 operator+
+            // fp16_t bf16_t 
+            //       |cast<float>
+            //    FP32 加法
+            //       |cast<float>
+            //      结果
             c[i] = llaisys::utils::cast<T>(llaisys::utils::cast<float>(a[i]) + llaisys::utils::cast<float>(b[i]));
         } else {
             c[i] = a[i] + b[i];

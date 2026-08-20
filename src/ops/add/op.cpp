@@ -5,6 +5,16 @@
 
 #include "cpu/add_cpu.hpp"
 
+#ifdef ENABLE_NVIDIA_API
+#include "nvidia/add_nvidia.cuh"
+#endif
+#ifdef ENABLE_ILUVATAR_API
+#include "iluvatar/add_iluvatar.cuh"
+#endif
+#ifdef ENABLE_METAX_API
+#include "metax/add_metax.hpp"
+#endif
+
 namespace llaisys::ops {
 void add(tensor_t c, tensor_t a, tensor_t b) {
     CHECK_SAME_DEVICE(c, a, b);
@@ -14,19 +24,50 @@ void add(tensor_t c, tensor_t a, tensor_t b) {
     ASSERT(c->isContiguous() && a->isContiguous() && b->isContiguous(), "Add: all tensors must be contiguous.");
 
     // always support cpu calculation
+    // CPU 设备不需要先激活硬件 runtime，可以直接调用 CPU 实现
     if (c->deviceType() == LLAISYS_DEVICE_CPU) {
         return cpu::add(c->data(), a->data(), b->data(), c->dtype(), c->numel());
     }
 
+    // 设备分发
     llaisys::core::context().setDevice(c->deviceType(), c->deviceId());
 
     switch (c->deviceType()) {
     case LLAISYS_DEVICE_CPU:
         return cpu::add(c->data(), a->data(), b->data(), c->dtype(), c->numel());
 #ifdef ENABLE_NVIDIA_API
+    // 只有 Xmake 配置启用 nv-gpu 时，才会定义 ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
-        TO_BE_IMPLEMENTED();
-        return;
+        return nvidia::add(
+            c->data(),
+            a->data(),
+            b->data(),
+            c->dtype(),
+            c->numel(),
+            llaisys::core::context().runtime().stream()
+        );
+#endif
+#ifdef ENABLE_ILUVATAR_API
+    case LLAISYS_DEVICE_ILUVATAR:
+        return iluvatar::add(
+            c->data(),
+            a->data(),
+            b->data(),
+            c->dtype(),
+            c->numel(),
+            llaisys::core::context().runtime().stream()
+        );
+#endif
+#ifdef ENABLE_METAX_API
+    case LLAISYS_DEVICE_METAX:
+        return metax::add(
+            c->data(),
+            a->data(),
+            b->data(),
+            c->dtype(),
+            c->numel(),
+            llaisys::core::context().runtime().stream()
+        );
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

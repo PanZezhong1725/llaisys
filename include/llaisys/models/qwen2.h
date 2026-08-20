@@ -28,7 +28,8 @@ __C {
         llaisysTensor_t *mlp_up_w;
         llaisysTensor_t *mlp_down_w;
     };
-
+    
+    // 只声明
     struct LlaisysQwen2Model;
 
     __export struct LlaisysQwen2Model *llaisysQwen2ModelCreate(const LlaisysQwen2Meta *meta, llaisysDeviceType_t device, int *device_ids, int ndevice);
@@ -37,6 +38,8 @@ __C {
 
     __export struct LlaisysQwen2Weights *llaisysQwen2ModelWeights(struct LlaisysQwen2Model * model);
 
+    __export void llaisysQwen2ModelReset(struct LlaisysQwen2Model *model);
+    
     __export int64_t llaisysQwen2ModelInfer(struct LlaisysQwen2Model * model, int64_t * token_ids, size_t ntoken);
 }
 #endif // LLAISYS_MODELS_QWEN2_H
