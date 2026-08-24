@@ -17,13 +17,14 @@ def torch_rope(y: torch.Tensor, x: torch.Tensor, pos_ids: torch.Tensor, theta: f
     x_a, x_b = x[..., : head_dim // 2], x[..., head_dim // 2 :]
 
     # [seq_len] positions starting from start_pos
-    positions = pos_ids.to(torch.float32).unsqueeze(1)  # [seq_len, 1]
+    positions = pos_ids.to(torch.float64).unsqueeze(1)  # [seq_len, 1]
 
     # RoPE frequency exponents: 1 / theta^(2i / d)
-    i = torch.arange(0, head_dim // 2, dtype=torch.float32, device=y.device)  # [1, head_dim//2]
+    # Use double precision to match the CUDA kernel's computation.
+    i = torch.arange(0, head_dim // 2, dtype=torch.float64, device=y.device)  # [1, head_dim//2]
     freqs = positions / (theta ** (2 * i / head_dim))  # [seq_len, head_dim//2]
 
-    sin, cos = freqs.sin(), freqs.cos()
+    sin, cos = freqs.sin().to(torch.float32), freqs.cos().to(torch.float32)
     sin = sin.unsqueeze(1)  # [seq_len, 1, dim/2]
     cos = cos.unsqueeze(1)
 
@@ -63,7 +64,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default="cpu", choices=["cpu", "nvidia"], type=str)
+    parser.add_argument("--device", default="cpu", choices=["cpu", "nvidia", "suda"], type=str)
     parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
     testShapes = [

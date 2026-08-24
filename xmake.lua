@@ -18,6 +18,18 @@ if has_config("nv-gpu") then
     includes("xmake/nvidia.lua")
 end
 
+-- SUDA (Iluvatar 天数) --
+option("suda-gpu")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Whether to compile implementations for Iluvatar SUDA GPU")
+option_end()
+
+if has_config("suda-gpu") then
+    add_defines("ENABLE_SUDA_API")
+    includes("xmake/suda.lua")
+end
+
 target("llaisys-utils")
     set_kind("static")
 
@@ -37,6 +49,12 @@ target("llaisys-device")
     set_kind("static")
     add_deps("llaisys-utils")
     add_deps("llaisys-device-cpu")
+    if has_config("nv-gpu") then
+        add_deps("llaisys-device-nvidia")
+    end
+    if has_config("suda-gpu") then
+        add_deps("llaisys-device-suda")
+    end
 
     set_languages("cxx17")
     set_warnings("all", "error")
@@ -48,6 +66,7 @@ target("llaisys-device")
 
     on_install(function (target) end)
 target_end()
+
 
 target("llaisys-core")
     set_kind("static")
@@ -106,7 +125,37 @@ target("llaisys")
     set_languages("cxx17")
     set_warnings("all", "error")
     add_files("src/llaisys/*.cc")
+    add_files("src/llaisys/*.cpp")
     set_installdir(".")
+
+    if has_config("nv-gpu") then
+        -- Link against the CUDA runtime library to resolve CUDA device code
+        -- registration symbols (e.g. __cudaRegisterLinkedBinary).
+        add_links("cudart")
+        if is_plat("windows") then
+            add_linkdirs("$(env CUDA_PATH)/lib/x64")
+        else
+            add_linkdirs("$(env CUDA_PATH)/lib64")
+        end
+        add_includedirs("$(env CUDA_PATH)/include")
+    end
+
+    if has_config("suda-gpu") then
+        -- Iluvatar CoreX exposes a CUDA-compatible toolchain; link the CUDA
+        -- runtime/BLAS libraries to resolve device code registration symbols.
+        add_links("cudart", "cublas", "cublasLt")
+        if is_plat("windows") then
+            add_linkdirs("$(env CUDA_PATH)/lib/x64")
+        else
+            add_linkdirs("$(env CUDA_PATH)/lib64")
+        end
+        add_includedirs("$(env CUDA_PATH)/include")
+    end
+
+
+
+
+
 
     
     after_install(function (target)

@@ -17,4 +17,10 @@ namespace nvidia {
 const LlaisysRuntimeAPI *getRuntimeAPI();
 }
 #endif
+
+#ifdef ENABLE_SUDA_API
+namespace suda {
+const LlaisysRuntimeAPI *getRuntimeAPI();
+}
+#endif
 } // namespace llaisys::device
