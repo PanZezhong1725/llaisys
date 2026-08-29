@@ -1,0 +1,54 @@
+# MetaX C500 Makefile for LLAISYS
+# Builds libllaisys.so with mxcc and installs it into the Python package.
+
+MACA_PATH ?= /opt/maca-3.5.3
+MXCC ?= $(MACA_PATH)/mxgpu_llvm/bin/mxcc
+ARCH ?= xcore1000
+CXX ?= g++
+BUILD_DIR ?= build/metax
+
+INCLUDES = -Iinclude -Isrc -I$(MACA_PATH)/include -I$(MACA_PATH)/tools/cu-bridge/include
+DEFINES = -DENABLE_NVIDIA_API -DNDEBUG
+
+CXXFLAGS = -std=c++17 -fPIC -O3 $(INCLUDES) $(DEFINES) -Wall
+CUFLAGS = -std=c++17 -fPIC -O3 -offload-arch=$(ARCH) $(INCLUDES) $(DEFINES) -Wall
+
+LDFLAGS = -shared -fPIC --maca-link -fgpu-rdc \
+  -L$(MACA_PATH)/lib64 -L$(MACA_PATH)/mxgpu_llvm/lib64 \
+  -lmcruntime -lmcblas -lmcdnn -lruntime_cu -lrt -lpthread -ldl \
+  -Wl,-rpath=$(MACA_PATH)/lib64
+
+HOST_CPP = $(wildcard src/utils/*.cpp src/device/*.cpp src/device/cpu/*.cpp src/core/*/*.cpp \
+  src/tensor/*.cpp src/ops/*/*.cpp src/ops/*/cpu/*.cpp src/models/*.cpp)
+HOST_CC = $(wildcard src/llaisys/*.cc)
+CU_SRCS = $(wildcard src/device/nvidia/*.cu src/ops/*/nvidia/*.cu src/llaisys/cuda_link.cu)
+
+HOST_OBJS = $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(HOST_CPP)) \
+            $(patsubst src/%.cc,$(BUILD_DIR)/%.o,$(HOST_CC))
+CU_OBJS = $(patsubst src/%.cu,$(BUILD_DIR)/%.o,$(CU_SRCS))
+
+.PHONY: all install clean
+
+all: $(BUILD_DIR)/libllaisys.so
+
+$(BUILD_DIR)/libllaisys.so: $(HOST_OBJS) $(CU_OBJS)
+	@mkdir -p $(dir $@)
+	$(MXCC) -o $@ $(HOST_OBJS) $(CU_OBJS) $(LDFLAGS)
+
+$(BUILD_DIR)/%.o: src/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) -c $(CXXFLAGS) -o $@ $<
+
+$(BUILD_DIR)/%.o: src/%.cc
+	@mkdir -p $(dir $@)
+	$(CXX) -c $(CXXFLAGS) -o $@ $<
+
+$(BUILD_DIR)/%.o: src/%.cu
+	@mkdir -p $(dir $@)
+	$(MXCC) -c $(CUFLAGS) -o $@ $<
+
+install: all
+	cp $(BUILD_DIR)/libllaisys.so python/llaisys/libllaisys/libllaisys.so
+
+clean:
+	rm -rf $(BUILD_DIR)
