@@ -31,6 +31,10 @@ cache/
 #GGUF
 *.gguf
 
+# Downloaded model weights
+model/
+*.safetensors
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
